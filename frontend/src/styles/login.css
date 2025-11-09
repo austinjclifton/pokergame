@@ -1,0 +1,106 @@
+/* === LOGIN & REGISTER PAGE STYLES === */
+
+.login-page {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+  background: transparent; /* fully transparent */
+  color: #fff;
+  text-align: center;
+}
+
+/* Title */
+.login-title {
+  font-weight: 700;
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  margin-bottom: 2rem;
+  letter-spacing: 1px;
+  color: #ffffff;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.1);
+}
+
+/* Transparent form styling */
+form {
+  width: min(400px, 90%);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1rem;
+  background: transparent; /* no box color */
+}
+
+/* Labels & Inputs */
+.login-label {
+  text-align: left;
+  font-weight: 300;
+  font-size: 0.9rem;
+  color: #d9d9d9;
+}
+
+.login-field {
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 0.65rem 0.8rem;
+  color: #fff;
+  font-size: 1rem;
+}
+
+.login-field:focus {
+  outline: none;
+  border-color: #c8102e;
+  box-shadow: 0 0 0 3px rgba(200, 16, 46, 0.35);
+}
+
+/* Buttons */
+.login-button {
+  width: 100%;
+  background: #c8102e;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 0.75rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.login-button:hover {
+  background: #e93a46;
+}
+
+/* Errors & meta text */
+.error-message {
+  color: #c8102e;
+  font-size: 0.9rem;
+  min-height: 1rem;
+}
+
+.login-meta {
+  margin-top: 1rem;
+  font-weight: 300;
+  color: #888;
+}
+
+.login-meta a {
+  color: #00a878;
+  text-decoration: none;
+}
+.login-meta a:hover {
+  text-decoration: underline;
+}
+
+/* === RESPONSIVE === */
+@media (max-width: 480px) {
+  .login-title {
+    font-size: clamp(2rem, 10vw, 3rem);
+    margin-bottom: 1.5rem;
+  }
+  form {
+    gap: 0.75rem;
+  }
+}

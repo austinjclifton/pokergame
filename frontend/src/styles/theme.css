@@ -1,0 +1,36 @@
+/* Design tokens */
+:root {
+    /* Colors */
+    --color-bg: #000000;          /* Main background */
+    --color-text: #ffffff;        /* Primary text & card text */
+    --color-accent: #C8102E;      /* Accent (Red) */
+    --color-muted: #444444;       /* Secondary Gray */
+    --color-highlight: #00A878;   /* Highlight (Green) */
+  
+    /* Typography */
+    --font-family: "Roboto Condensed", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    --weight-light: 300;
+    --weight-regular: 400;
+    --weight-bold: 700;
+  
+    /* Spacing & Radius */
+    --radius: 12px;
+    --space-1: 0.5rem;
+    --space-2: 0.75rem;
+    --space-3: 1rem;
+    --space-4: 1.5rem;
+  
+    /* Shadows */
+    --shadow-1: 0 0 20px rgba(0, 0, 0, 0.6);
+  
+    /* Component baseline */
+    --input-bg: #111111;
+    --input-border: #2a2a2a;
+    --input-text: #ffffff;
+    --card-bg: #0d0d0d;
+    --button-bg: var(--color-accent);
+    --button-text: #ffffff;
+    --button-bg-hover: #e11436;
+    --focus-ring: 0 0 0 3px rgba(200, 16, 46, 0.35);
+  }
+  

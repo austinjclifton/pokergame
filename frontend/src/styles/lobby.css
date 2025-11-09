@@ -1,0 +1,325 @@
+/* ========== LOBBY PAGE ========== */
+.lobby-page {
+  max-width: 700px;
+  margin: 60px auto;
+  text-align: center;
+  color: #fff;
+  padding: 20px;
+}
+
+.lobby-title {
+  font-size: 2rem;
+  margin-bottom: 20px;
+}
+
+/* Header Row */
+.lobby-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 25px;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.user-counts {
+  display: flex;
+  gap: 15px;
+  font-size: 0.9rem;
+}
+
+.count-item {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.count-label {
+  color: #aaa;
+}
+
+.count-value {
+  font-weight: bold;
+  color: #fff;
+}
+
+.header-buttons {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.logout-button {
+  background-color: #c0392b;
+  color: white;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+}
+.logout-button:hover {
+  opacity: 0.9;
+}
+
+.challenges-button {
+  background-color: #f39c12;
+  color: white;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+}
+.challenges-button:hover {
+  opacity: 0.9;
+}
+
+/* Main Lobby Container */
+.lobby-container {
+  border-radius: 10px;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+}
+
+/* Player List */
+.player-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.player-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 8px;
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.player-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.challenge-response-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.challenge-button {
+  background-color: #124e78;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.challenge-button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.challenge-button:disabled {
+  background-color: #7f8c8d;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.challenged-button {
+  background-color: #7f8c8d;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: not-allowed;
+  font-weight: bold;
+  opacity: 0.6;
+}
+
+.cancel-button {
+  background-color: #e74c3c;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.cancel-button:hover {
+  opacity: 0.9;
+  background-color: #c0392b;
+}
+
+.pending-button {
+  background-color: #f39c12;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: not-allowed;
+  font-weight: bold;
+  opacity: 0.8;
+}
+
+/* ========== CHAT BOX ========== */
+.chat-box {
+  margin-top: 25px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  height: 300px;
+}
+
+.chat-messages {
+  flex-grow: 1;
+  overflow-y: auto;
+  margin-bottom: 12px;
+  text-align: left;
+  font-family: monospace;
+}
+
+.chat-message {
+  margin: 3px 0;
+}
+
+.chat-message .sender {
+  color: #f2bb05;
+  font-weight: bold;
+}
+
+.chat-message .timestamp {
+  color: #888;
+  font-size: 0.85rem;
+  margin-right: 6px;
+}
+
+.chat-message.system {
+  color: #aaa;
+  font-style: italic;
+}
+
+.chat-message.error {
+  color: #e74c3c;
+  font-weight: bold;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input {
+  flex-grow: 1;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 8px;
+}
+
+.send-button {
+  background: #3498db;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.send-button:hover {
+  opacity: 0.9;
+}
+
+/* ========== CHALLENGES PANEL ========== */
+.challenges-panel {
+  margin-bottom: 25px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+}
+
+.challenges-panel h3 {
+  margin: 0 0 15px 0;
+  color: #f39c12;
+  font-size: 1.2rem;
+}
+
+.challenges-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.challenge-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.challenge-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.challenge-text {
+  color: #fff;
+  font-size: 0.9rem;
+}
+
+.challenge-time {
+  color: #aaa;
+  font-size: 0.8rem;
+}
+
+.challenge-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.accept-button {
+  background-color: #27ae60;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.8rem;
+}
+
+.player-actions .accept-button {
+  font-size: 0.9rem;
+}
+.accept-button:hover {
+  opacity: 0.9;
+}
+
+.decline-button {
+  background-color: #e74c3c;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.8rem;
+}
+.decline-button:hover {
+  opacity: 0.9;
+}

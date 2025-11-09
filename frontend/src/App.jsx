@@ -1,35 +1,116 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+// src/App.jsx
+import React, { useState, useEffect } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import LoginPage from "./pages/LoginPage";
+import RegisterPage from "./pages/RegisterPage";
+import LobbyPage from "./pages/LobbyPage";
+import Card from "./components/cards/Card";
+import API from "./config/api";
 
-function App() {
-  const [count, setCount] = useState(0)
+const GamePage = () => (
+  <h1 style={{ textAlign: "center", color: "#fff" }}>Game (Coming soon)</h1>
+);
 
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [checking, setChecking] = useState(true);
+
+  // ---------------- LOGOUT HANDLER ----------------
+  const handleLogout = () => {
+    setUser(null);
+  };
+
+  // ---------------- SESSION CHECK ----------------
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const res = await fetch(API.endpoints.me, {
+          credentials: "include",
+        });
+
+        // 401 → no session
+        if (res.status === 401) {
+          setUser(null);
+          return;
+        }
+
+        const data = await res.json();
+        if (data.ok && data.user) {
+          setUser(data.user);
+          console.log("Logged in as", data.user.username);
+        } else {
+          setUser(null);
+        }
+      } catch (err) {
+        setUser(null);
+      } finally {
+        setChecking(false);
+      }
+    };
+
+    checkSession();
+  }, []);
+
+  if (checking)
+    return <p style={{ color: "white", textAlign: "center" }}>Checking session...</p>;
+
+  // ---------------- ROUTES ----------------
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
-}
+    <Router>
+      <Routes>
+        {/* Redirect root based on auth state */}
+        <Route path="/" element={<Navigate to={user ? "/lobby" : "/login"} replace />} />
 
-export default App
+        {/* LOGIN + REGISTER: redirect if already logged in */}
+        <Route
+          path="/login"
+          element={user ? <Navigate to="/lobby" replace /> : <LoginPage onLogin={setUser} />}
+        />
+
+        <Route
+          path="/register"
+          element={user ? <Navigate to="/lobby" replace /> : <RegisterPage />}
+        />
+
+        {/* LOBBY: protected route */}
+        <Route
+          path="/lobby"
+          element={user ? <LobbyPage user={user} onLogout={handleLogout} /> : <Navigate to="/login" replace />}
+        />
+
+        {/* GAME (coming soon) */}
+        <Route path="/game/:id" element={<GamePage />} />
+
+        {/* CARD TEST PAGE */}
+        <Route
+          path="/card-test"
+          element={
+            <div
+              style={{
+                display: "flex",
+                gap: "1rem",
+                justifyContent: "center",
+                alignItems: "center",
+                minHeight: "100vh",
+                background:
+                  "radial-gradient(circle at 50% 50%, #0b2a1a 0%, #000 90%)",
+              }}
+            >
+              <Card suit="hearts" rank="3" />
+              <Card suit="spades" rank="K" />
+              <Card suit="diamonds" rank="10" />
+              <Card suit="clubs" rank="Q" />
+              <Card suit="spades" rank="A" revealed={false} />
+            </div>
+          }
+        />
+
+        {/* FALLBACK 404 */}
+        <Route
+          path="*"
+          element={<h1 style={{ color: "white", textAlign: "center" }}>404 Not Found</h1>}
+        />
+      </Routes>
+    </Router>
+  );
+}

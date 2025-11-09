@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/12.0/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         colors="true"
+         stopOnFailure="false"
+         displayDetailsOnPhpunitDeprecations="true">
+    <testsuites>
+        <testsuite name="PokerGame Test Suite">
+            <directory>tests/unit</directory>
+            <directory>tests/integration</directory>
+            <exclude>tests/integration/db/BaseDBIntegrationTest.php</exclude>
+        </testsuite>
+    </testsuites>
+    
+    <source>
+        <include>
+            <directory suffix=".php">app</directory>
+            <directory suffix=".php">ws</directory>
+            <directory suffix=".php">lib</directory>
+        </include>
+        <exclude>
+            <directory>app/db</directory>
+            <directory>config</directory>
+        </exclude>
+    </source>
+</phpunit>

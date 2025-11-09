@@ -1,0 +1,18 @@
+parameters:
+    ignoreErrors:
+        # PHPUnit mocks create dynamic methods and properties not in interfaces
+        # These are expected and safe in test contexts
+        - '#Call to unknown method: Ratchet\\ConnectionInterface::expects\(\)#'
+        - '#Undefined property: ConnectionInterface::\$userCtx#'
+        - '#Undefined property: ConnectionInterface::\$remoteAddress#'
+        - '#Undefined property: ConnectionInterface::\$ipAddress#'
+        - '#Undefined property: ConnectionInterface::\$httpRequest#'
+        - '#Undefined property: ConnectionInterface::\$userId#'
+        - '#Argument.*passed to __construct\(\) is expected to be of type Ratchet\\MessageComponentInterface, PHPUnit\\Framework\\MockObject\\MockObject given#'
+        -
+            message: '#Call to unknown method: Ratchet\\ConnectionInterface::expects\(\)#'
+            path: tests/unit/AuthenticatedServerTest.php
+        -
+            message: '#Undefined property: ConnectionInterface::\$.*#'
+            path: tests/unit/AuthenticatedServerTest.php
+
