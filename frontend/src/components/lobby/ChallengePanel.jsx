@@ -13,7 +13,17 @@ export default function ChallengePanel({
   socketRef, // Add socketRef prop to send WebSocket messages
 }) {
   const handleRespond = (id, action) => {
-    if (!socketRef?.current) return;
+    if (!socketRef?.current) {
+      console.error("[ChallengePanel] Cannot respond: socket not connected");
+      return;
+    }
+    
+    if (socketRef.current.readyState !== WebSocket.OPEN) {
+      console.error("[ChallengePanel] Cannot respond: socket not open");
+      return;
+    }
+    
+    console.log(`[ChallengePanel] Sending challenge response: ${action} for challenge ${id}`);
     
     // Send challenge response via WebSocket
     socketRef.current.send(JSON.stringify({
@@ -31,7 +41,17 @@ export default function ChallengePanel({
   };
 
   const handleCancel = (id) => {
-    if (!socketRef?.current) return;
+    if (!socketRef?.current) {
+      console.error("[ChallengePanel] Cannot cancel: socket not connected");
+      return;
+    }
+    
+    if (socketRef.current.readyState !== WebSocket.OPEN) {
+      console.error("[ChallengePanel] Cannot cancel: socket not open");
+      return;
+    }
+    
+    console.log(`[ChallengePanel] Sending challenge cancel for challenge ${id}`);
     
     // Send challenge cancel via WebSocket
     socketRef.current.send(JSON.stringify({
@@ -74,30 +94,42 @@ export default function ChallengePanel({
               </div>
 
               {/* Actions: Accept/Decline if challenged, Cancel if sender */}
-              {c.is_to_me && (
+              {c.is_to_me && c.status === 'pending' && (
                 <div className="challenge-actions">
                   <button
                     className="accept-button"
                     onClick={() => handleRespond(c.id, "accept")}
+                    disabled={pending.has(c.id)}
                   >
                     Accept
                   </button>
                   <button
                     className="decline-button"
                     onClick={() => handleRespond(c.id, "decline")}
+                    disabled={pending.has(c.id)}
                   >
                     Decline
                   </button>
                 </div>
               )}
-              {c.is_from_me && (
+              {c.is_from_me && c.status === 'pending' && (
                 <div className="challenge-actions">
                   <button
                     className="cancel-button"
                     onClick={() => handleCancel(c.id)}
+                    disabled={pending.has(c.id)}
                   >
                     Cancel
                   </button>
+                </div>
+              )}
+              {c.status !== 'pending' && (
+                <div className="challenge-status">
+                  <span style={{ color: '#888', fontSize: '0.9em' }}>
+                    {c.status === 'accepted' ? '✓ Accepted' : 
+                     c.status === 'declined' ? '✗ Declined' : 
+                     c.status === 'cancelled' ? '✗ Cancelled' : c.status}
+                  </span>
                 </div>
               )}
             </div>

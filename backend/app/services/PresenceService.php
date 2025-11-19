@@ -31,6 +31,20 @@ class PresenceService
     }
 
     /**
+     * Mark a user as in_game (actively playing).
+     * Returns TRUE only if the user was not previously in_game.
+     */
+    public function markInGame(int $userId, string $username): bool
+    {
+        $before = db_get_user_presence($this->pdo, $userId);
+        db_upsert_presence($this->pdo, $userId, $username, 'in_game');
+        $after = db_get_user_presence($this->pdo, $userId);
+
+        // only return true if they just transitioned into in_game
+        return !$before || $before['status'] !== 'in_game';
+    }
+
+    /**
      * Mark a user as offline or remove them completely.
      * Returns TRUE only if they were previously online.
      */

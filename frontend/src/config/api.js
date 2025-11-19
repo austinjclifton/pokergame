@@ -20,6 +20,7 @@ export const API = {
     nonce: `${API_BASE_URL}/api/nonce.php`,
     wsToken: `${API_BASE_URL}/api/ws_token.php`,
     challenges: `${API_BASE_URL}/api/challenges.php`,
+    challengesPending: `${API_BASE_URL}/api/challenges/pending.php`,
     challenge: `${API_BASE_URL}/api/challenge.php`,
     challengeAccept: `${API_BASE_URL}/api/challenge_accept.php`,
     challengeResponse: `${API_BASE_URL}/api/challenge_response.php`,
@@ -29,6 +30,7 @@ export const API = {
   // WebSocket endpoints
   ws: {
     lobby: (token) => `${WS_BASE_URL}/lobby?token=${token}`,
+    game: (tableId, token) => `${WS_BASE_URL}/game?table_id=${tableId}&token=${token}`,
   },
 };
 

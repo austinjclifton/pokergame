@@ -8,334 +8,209 @@ use Psr\Http\Message\RequestInterface;
 /**
  * AuthenticatedServer
  * -----------------------------------------------------------------------------
- * This class acts as a protective wrapper ("decorator") around a WebSocket
- * endpoint such as LobbySocket.
+ * Production-quality decorator for Ratchet WebSocket components that provides
+ * unified authentication and standardized user context.
  *
- * Its main responsibility is to ensure that every incoming connection and
- * message is from an authenticated user before any of the underlying
- * socket logic is executed.
- *
- * It implements Ratchet's MessageComponentInterface, so Ratchet can treat
- * it exactly like any other socket handler. However, before delegating to
- * the real socket, this layer performs authentication and attaches
- * user context information to the connection.
- *
- * Usage example:
- *     $app->route('/lobby', new AuthenticatedServer($pdo, $lobby), ['*']);
- *
- * This means that every new WebSocket connection to /lobby must first pass
- * through this decorator for authentication before reaching LobbySocket.
+ * Channel policy:
+ *   - "game"  → requires ws_token (no session fallback)
+ *   - others  → allow ws_token or session cookie fallback
  */
 final class AuthenticatedServer implements MessageComponentInterface {
-    /** Database connection used for authentication lookups. */
     private PDO $pdo;
-
-    /** The "inner" socket (e.g., LobbySocket) that handles real logic. */
     private MessageComponentInterface $inner;
-    
-    /** Track connections per IP for rate limiting */
-    private static array $ipConnections = [];
-    
-    /** Track connections per user for rate limiting */
-    private static array $userConnections = [];
-    
-    /** Maximum connections per IP */
-    private const MAX_CONNECTIONS_PER_IP = 10;
-    
-    /** Maximum connections per user */
-    private const MAX_CONNECTIONS_PER_USER = 5;
-    
-    /** Maximum total connections */
-    private const MAX_TOTAL_CONNECTIONS = 1000;
-    
-    /** Current total connection count */
-    private static int $totalConnections = 0;
+    private string $channelType;
 
-    /**
-     * Constructor
-     *
-     * @param PDO $pdo Database handle for verifying tokens or sessions.
-     * @param MessageComponentInterface $inner The actual socket that will receive
-     *        events once authentication is successful.
-     */
-    public function __construct(PDO $pdo, MessageComponentInterface $inner) {
-        $this->pdo   = $pdo;
+    public function __construct(PDO $pdo, MessageComponentInterface $inner, string $channelType = 'generic') {
+        $this->pdo = $pdo;
         $this->inner = $inner;
+        $this->channelType = $channelType;
+    }
+
+    /** Parse query string from PSR-7 Request */
+    private function parseQuery(RequestInterface $req): array {
+        $query = $req->getUri()->getQuery() ?? '';
+        parse_str($query, $params);
+        return is_array($params) ? $params : [];
+    }
+
+    /** Extract cookie by name */
+    private function getCookie(RequestInterface $req, string $name): ?string {
+        foreach ($req->getHeader('Cookie') as $header) {
+            foreach (explode(';', $header) as $pair) {
+                $parts = array_map('trim', explode('=', $pair, 2) + [null, null]);
+                if ($parts[0] === $name && $parts[1] !== null) {
+                    return urldecode($parts[1]);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Validate short-lived ws_token via DB lookup */
+    private function validateToken(string $token): ?array {
+        if ($token === '') return null;
+
+        try {
+            $result = db_consume_ws_nonce($this->pdo, $token);
+            if (!$result) return null;
+
+            return [
+                'user_id' => (int)$result['user_id'],
+                'username' => (string)$result['username'],
+                'session_id' => (int)$result['session_id'],
+            ];
+        } catch (Throwable $e) {
+            error_log('[AuthenticatedServer] Token validation error: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /** Validate persistent session cookie */
+    private function validateSession(string $sessionId): ?array {
+        $sid = (int)$sessionId;
+        if ($sid <= 0) return null;
+
+        try {
+            $session = db_get_session_with_user($this->pdo, $sid);
+            if (!$session) return null;
+
+            return [
+                'user_id' => (int)$session['user_id'],
+                'username' => (string)$session['username'],
+                'session_id' => (int)$session['session_id'],
+            ];
+        } catch (Throwable $e) {
+            error_log('[AuthenticatedServer] Session validation error: ' . $e->getMessage());
+            return null;
+        }
     }
 
     /**
-     * Get client IP from WebSocket connection or handshake request.
+     * Authenticate connection.
+     * Game sockets must use ws_token — no fallback allowed.
      */
-    private function getClientIp(ConnectionInterface $conn, RequestInterface $req): string {
-        // Check for proxy headers first (most reliable for production behind reverse proxy)
-        $headers = [
-            'X-Forwarded-For',
-            'X-Real-IP',
-            'Client-IP',
-        ];
-        
-        foreach ($headers as $header) {
-            $value = $req->getHeaderLine($header);
-            if ($value !== '') {
-                $ips = explode(',', $value);
-                $ip = trim($ips[0]);
-                // First try to validate as public IP (preferred for production)
-                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                    return $ip;
-                }
-                // If not public, still accept if it's a valid IP (for testing/development)
-                if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                    return $ip;
-                }
+    private function authenticate(RequestInterface $req): ?array {
+        $query = $this->parseQuery($req);
+        $token = isset($query['token']) ? trim((string)$query['token']) : '';
+        $sessionCookie = $this->getCookie($req, 'session_id');
+
+        // Always prefer token if provided
+        if ($token !== '') {
+            $ctx = $this->validateToken($token);
+            if ($ctx) {
+                return [
+                    'user_id' => $ctx['user_id'],
+                    'username' => $ctx['username'],
+                    'session_id' => $ctx['session_id'],
+                    'token' => $token,
+                    'channel' => $this->channelType,
+                ];
+            }
+            // Invalid token — reject regardless of fallback policy
+            return null;
+        }
+
+        // 🔒 Require token for all "game" sockets
+        if ($this->channelType === 'game') {
+            error_log('[AuthenticatedServer] Missing ws_token for game socket');
+            return null;
+        }
+
+        // Fallback allowed only for non-game channels (e.g. lobby)
+        if ($sessionCookie !== null) {
+            $ctx = $this->validateSession($sessionCookie);
+            if ($ctx) {
+                return [
+                    'user_id' => $ctx['user_id'],
+                    'username' => $ctx['username'],
+                    'session_id' => $ctx['session_id'],
+                    'token' => '',
+                    'channel' => $this->channelType,
+                ];
             }
         }
-        
-        // Fallback: get from connection's remote address (Ratchet sets this)
-        // Ratchet's IoServer sets $conn->remoteAddress property
-        if (isset($conn->remoteAddress) && is_string($conn->remoteAddress)) {
-            // Extract IP from address (format: "127.0.0.1:12345" or "tcp://127.0.0.1:12345")
-            $address = $conn->remoteAddress;
-            // Remove protocol prefix if present
-            $address = preg_replace('/^[^:]+:\/\//', '', $address);
-            // Extract IP (before colon)
-            $parts = explode(':', $address);
-            $ip = $parts[0] ?? '';
-            if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                return $ip;
-            }
-        }
-        
-        // Try getRemoteAddress() method if available (React Socket interface)
-        if (method_exists($conn, 'getRemoteAddress')) {
-            $address = $conn->getRemoteAddress();
-            if ($address !== null) {
-                // Parse URI format: "tcp://127.0.0.1:12345"
-                $host = parse_url($address, PHP_URL_HOST);
-                if ($host !== null) {
-                    $ip = trim($host, '[]'); // Remove brackets for IPv6
-                    if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                        return $ip;
-                    }
-                }
-            }
-        }
-        
-        // Last resort: use placeholder (shouldn't happen in normal operation)
-        error_log('[WS] Could not determine client IP for connection');
-        return '0.0.0.0';
+
+        return null;
     }
-    
-    /**
-     * Check connection limits (IP, user, total).
-     * 
-     * @return array ['allowed' => bool, 'reason' => string|null]
-     */
-    private function checkConnectionLimits(string $ip, int $userId): array {
-        // Check total connection limit
-        if (self::$totalConnections >= self::MAX_TOTAL_CONNECTIONS) {
-            return ['allowed' => false, 'reason' => 'server_at_capacity'];
-        }
-        
-        // Check IP-based limit
-        $ipCount = self::$ipConnections[$ip] ?? 0;
-        if ($ipCount >= self::MAX_CONNECTIONS_PER_IP) {
-            return ['allowed' => false, 'reason' => 'ip_connection_limit_exceeded'];
-        }
-        
-        // Check user-based limit
-        $userCount = self::$userConnections[$userId] ?? 0;
-        if ($userCount >= self::MAX_CONNECTIONS_PER_USER) {
-            return ['allowed' => false, 'reason' => 'user_connection_limit_exceeded'];
-        }
-        
-        return ['allowed' => true, 'reason' => null];
-    }
-    
-    /**
-     * Increment connection counts.
-     */
-    private function incrementConnectionCounts(string $ip, int $userId): void {
-        self::$ipConnections[$ip] = (self::$ipConnections[$ip] ?? 0) + 1;
-        self::$userConnections[$userId] = (self::$userConnections[$userId] ?? 0) + 1;
-        self::$totalConnections++;
-    }
-    
-    /**
-     * Decrement connection counts.
-     */
-    private function decrementConnectionCounts(string $ip, int $userId): void {
-        if (isset(self::$ipConnections[$ip]) && self::$ipConnections[$ip] > 0) {
-            self::$ipConnections[$ip]--;
-            if (self::$ipConnections[$ip] <= 0) {
-                unset(self::$ipConnections[$ip]);
-            }
-        }
-        
-        if (isset(self::$userConnections[$userId]) && self::$userConnections[$userId] > 0) {
-            self::$userConnections[$userId]--;
-            if (self::$userConnections[$userId] <= 0) {
-                unset(self::$userConnections[$userId]);
-            }
-        }
-        
-        if (self::$totalConnections > 0) {
-            self::$totalConnections--;
-        }
-    }
-    
-    /**
-     * onOpen()
-     * -------------------------------------------------------------------------
-     * Called by Ratchet when a client first establishes a WebSocket connection.
-     * This method intercepts the handshake, extracts the HTTP request object,
-     * and runs authentication before letting the connection proceed.
-     *
-     * Steps:
-     *   1. Retrieve the PSR-7 Request object from the connection.
-     *   2. Parse query parameters and cookies.
-     *   3. Validate credentials using ws_auth().
-     *   4. Check connection limits (IP, user, total).
-     *   5. If authentication passes, attach 'userCtx' to the connection object
-     *      and delegate to the inner socket's onOpen().
-     *   6. If authentication fails, send an error message and close the socket.
-     */
+
     public function onOpen(ConnectionInterface $conn): void {
         try {
-            /** @var RequestInterface|null $req The HTTP upgrade request from the browser. */
             $req = $conn->httpRequest ?? null;
             if (!$req instanceof RequestInterface) {
-                // Defensive check: if Ratchet didn't store the handshake request.
-                error_log('[WS] Missing handshake request');
+                $conn->send(json_encode(['type' => 'error', 'error' => 'unauthorized']));
                 $conn->close();
                 return;
             }
 
-            // Run the authentication routine defined in server.php helpers.
-            $ctx = ws_auth($this->pdo, $req);
+            $userCtx = $this->authenticate($req);
 
-            if (!$ctx) {
-                // Authentication failed: inform client and terminate connection.
-                $conn->send(json_encode([
-                    'type'    => 'error',
-                    'message' => 'Unauthorized WebSocket connection.'
-                ]));
+            if (!$userCtx) {
+                $conn->send(json_encode(['type' => 'error', 'error' => 'unauthorized']));
                 $conn->close();
                 return;
             }
-            
-            // Get client IP and check connection limits
-            $ip = $this->getClientIp($conn, $req);
-            $userId = (int)$ctx['user_id'];
-            $limits = $this->checkConnectionLimits($ip, $userId);
-            
-            if (!$limits['allowed']) {
-                // Connection limit exceeded
-                $conn->send(json_encode([
-                    'type'    => 'error',
-                    'message' => 'Connection limit exceeded: ' . $limits['reason']
-                ]));
-                $conn->close();
-                error_log("[WS] Connection rejected: IP={$ip}, User={$userId}, Reason={$limits['reason']}");
-                return;
-            }
-            
-            // Increment connection counts
-            $this->incrementConnectionCounts($ip, $userId);
-            
-            // Store IP and user ID in connection for cleanup on close
-            $conn->ipAddress = $ip;
-            $conn->userId = $userId;
 
-            // Authentication succeeded.
-            // Attach user context to the connection so downstream handlers
-            // (LobbySocket, etc.) can access it.
-            // Example: $conn->userCtx['user_id']
-            $conn->userCtx = $ctx;
+            $conn->userCtx = $userCtx;
 
-            // Pass the event down to the actual socket logic.
+            // Forward to inner socket lifecycle
             $this->inner->onOpen($conn);
 
+            if (method_exists($this->inner, 'onAuthenticated')) {
+                try {
+                    $this->inner->onAuthenticated($conn);
+                } catch (Throwable $e) {
+                    error_log('[AuthenticatedServer] onAuthenticated callback error: ' . $e->getMessage());
+                }
+            }
+
         } catch (Throwable $e) {
-            // Catch any unexpected runtime or logic errors to prevent the
-            // connection from hanging in an inconsistent state.
-            error_log('[WS] onOpen error: ' . $e->getMessage());
-            $conn->send(json_encode(['type' => 'error', 'message' => 'server_error']));
-            $conn->close();
+            error_log('[AuthenticatedServer] onOpen error: ' . $e->getMessage());
+            try {
+                $conn->send(json_encode(['type' => 'error', 'error' => 'server_error']));
+            } catch (Throwable) {}
+            try { $conn->close(); } catch (Throwable) {}
         }
     }
 
-    /**
-     * onMessage()
-     * -------------------------------------------------------------------------
-     * Called whenever a connected client sends a message.
-     *
-     * This method first checks whether the connection was authenticated
-     * (i.e., whether 'userCtx' was attached during onOpen()).
-     *
-     * If not authenticated, it immediately closes the connection.
-     * If authenticated, it delegates the message to the inner socket handler.
-     *
-     * @param ConnectionInterface $from The connection that sent the message.
-     * @param string $msg The raw message payload from the client.
-     */
     public function onMessage(ConnectionInterface $from, $msg): void {
-        // Reject messages from unauthorized connections.
-        if (!isset($from->userCtx)) {
-            $from->send(json_encode(['type' => 'error', 'message' => 'unauthorized']));
-            $from->close();
+        if (!isset($from->userCtx) || !is_array($from->userCtx)) {
+            try {
+                $from->send(json_encode(['type' => 'error', 'error' => 'unauthorized']));
+            } catch (Throwable) {}
+            try { $from->close(); } catch (Throwable) {}
             return;
         }
 
-        // Forward the message to the inner socket (e.g., LobbySocket).
-        $this->inner->onMessage($from, $msg);
+        try {
+            $this->inner->onMessage($from, $msg);
+        } catch (Throwable $e) {
+            error_log('[AuthenticatedServer] Error forwarding message: ' . $e->getMessage());
+        }
     }
 
-    /**
-     * onClose()
-     * -------------------------------------------------------------------------
-     * Called when a client disconnects, either intentionally or due to network loss.
-     *
-     * Only delegates to the inner socket if the connection was authenticated,
-     * because unauthenticated connections never reached the main socket layer.
-     *
-     * This allows LobbySocket to handle user cleanup logic,
-     * such as marking the user offline or removing them from a room list.
-     */
     public function onClose(ConnectionInterface $conn): void {
-        // Decrement connection counts if connection was tracked
-        if (isset($conn->ipAddress) && isset($conn->userId)) {
-            $this->decrementConnectionCounts($conn->ipAddress, $conn->userId);
-        }
-        
         if (isset($conn->userCtx)) {
-            $this->inner->onClose($conn);
+            try {
+                $this->inner->onClose($conn);
+            } catch (Throwable $e) {
+                error_log('[AuthenticatedServer] onClose error: ' . $e->getMessage());
+            }
         }
     }
 
-    /**
-     * onError()
-     * -------------------------------------------------------------------------
-     * Called whenever an exception occurs during any of the above phases.
-     *
-     * This method:
-     *   - Logs the error message for server debugging.
-     *   - Sends a generic 'server_error' message to the client.
-     *   - Delegates the error to the inner socket for any additional handling.
-     *   - Closes the connection to prevent lingering corrupted state.
-     *
-     * @param ConnectionInterface $conn The connection where the error occurred.
-     * @param Exception $e The thrown exception instance.
-     */
     public function onError(ConnectionInterface $conn, \Exception $e): void {
-        error_log('[WS] transport error: ' . $e->getMessage());
+        $userId = $conn->userCtx['user_id'] ?? 'unknown';
+        error_log('[AuthenticatedServer] Transport error for user ' . $userId . ': ' . $e->getMessage());
+        try {
+            $conn->send(json_encode(['type' => 'error', 'error' => 'server_error']));
+        } catch (Throwable) {}
 
-        // Notify client that something went wrong on the server side.
-        $conn->send(json_encode(['type' => 'error', 'message' => 'server_error']));
+        try {
+            $this->inner->onError($conn, $e);
+        } catch (Throwable $innerError) {
+            error_log('[AuthenticatedServer] Error forwarding onError: ' . $innerError->getMessage());
+        }
 
-        // Allow inner socket to handle any domain-specific cleanup if needed.
-        $this->inner->onError($conn, $e);
-
-        // Always close the connection to prevent half-open sockets.
-        $conn->close();
+        try { $conn->close(); } catch (Throwable) {}
     }
 }

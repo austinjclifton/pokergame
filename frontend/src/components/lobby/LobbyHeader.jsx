@@ -13,7 +13,10 @@ export default function LobbyHeader({
   players,
 }) {
   // Calculate user counts
-  const onlineCount = players.filter((p) => p.status === "online" || !p.status).length;
+  // "In Lobby" = users with status "online" (available in lobby, not in a game)
+  // "In Game" = users with status "in_game" (actively playing)
+  // "Total" = all users (online + in_game)
+  const inLobbyCount = players.filter((p) => p.status === "online" || !p.status).length;
   const inGameCount = players.filter((p) => p.status === "in_game").length;
   const totalCount = players.length;
 
@@ -23,8 +26,8 @@ export default function LobbyHeader({
         <h1 className="lobby-title">PokerGame Lobby</h1>
         <div className="user-counts">
           <span className="count-item">
-            <span className="count-label">Online:</span>
-            <span className="count-value">{onlineCount}</span>
+            <span className="count-label">In Lobby:</span>
+            <span className="count-value">{inLobbyCount}</span>
           </span>
           <span className="count-item">
             <span className="count-label">In Game:</span>

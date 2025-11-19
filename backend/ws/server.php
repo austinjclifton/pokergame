@@ -28,9 +28,11 @@ require_once __DIR__ . '/../vendor/autoload.php';
 $backendRoot = dirname(__DIR__);
 require_once $backendRoot . '/config/db.php';               // Provides $pdo
 require_once $backendRoot . '/app/services/AuthService.php';
-require_once $backendRoot . '/app/db/nonces.php';
+require_once $backendRoot . '/app/db/nonces.php';           // db_consume_ws_nonce()
+require_once $backendRoot . '/app/db/sessions.php';         // db_get_session_with_user()
 require_once __DIR__ . '/AuthenticatedServer.php';
 require_once __DIR__ . '/LobbySocket.php';
+require_once __DIR__ . '/GameSocket.php';
 
 // -----------------------------------------------------------------------------
 // 🧩 Utility helpers for the WebSocket handshake
@@ -105,14 +107,16 @@ function ws_auth(PDO $pdo, RequestInterface $req): ?array {
 $WS_HOST = getenv('WS_HOST') ?: '127.0.0.1';
 $WS_PORT = (int)(getenv('WS_PORT') ?: 8080);
 
-echo "[WS] Listening on {$WS_HOST}:{$WS_PORT} (routes: /lobby)\n";
+echo "[WS] Listening on {$WS_HOST}:{$WS_PORT} (routes: /lobby, /game)\n";
 
 // Instantiate route handlers
 $lobby = new LobbySocket($pdo);
+$game = new GameSocket($pdo);
 
-// Configure routes
+// Configure routes with channel-specific AuthenticatedServer wrappers
 $app = new RatchetApp($WS_HOST, $WS_PORT, '0.0.0.0');
-$app->route('/lobby', new AuthenticatedServer($pdo, $lobby), ['*']);
+$app->route('/lobby', new AuthenticatedServer($pdo, $lobby, 'lobby'), ['*']);
+$app->route('/game', new AuthenticatedServer($pdo, $game, 'game'), ['*']);
 
 // Run the event loop indefinitely
 $app->run();

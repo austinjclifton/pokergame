@@ -4,12 +4,9 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-d
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import LobbyPage from "./pages/LobbyPage";
+import GamePage from "./pages/GamePage";
 import Card from "./components/cards/Card";
 import API from "./config/api";
-
-const GamePage = () => (
-  <h1 style={{ textAlign: "center", color: "#fff" }}>Game (Coming soon)</h1>
-);
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -36,11 +33,17 @@ export default function App() {
 
         const data = await res.json();
         if (data.ok && data.user) {
-          setUser(data.user);
+          setUser({
+            id: data.user.id ?? data.user.user_id,
+            username: data.user.username,
+            email: data.user.email,
+            session_id: data.user.session_id
+          });
+        
           console.log("Logged in as", data.user.username);
         } else {
           setUser(null);
-        }
+        }        
       } catch (err) {
         setUser(null);
       } finally {
@@ -78,8 +81,11 @@ export default function App() {
           element={user ? <LobbyPage user={user} onLogout={handleLogout} /> : <Navigate to="/login" replace />}
         />
 
-        {/* GAME (coming soon) */}
-        <Route path="/game/:id" element={<GamePage />} />
+        {/* GAME: protected route */}
+        <Route
+          path="/game/:tableId"
+          element={user ? <GamePage user={user} /> : <Navigate to="/login" replace />}
+        />
 
         {/* CARD TEST PAGE */}
         <Route

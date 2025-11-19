@@ -18,6 +18,7 @@ require_once __DIR__ . '/../app/services/ChallengeService.php';
 require_once __DIR__ . '/../app/services/AuditService.php';
 require_once __DIR__ . '/../app/db/chat_messages.php';
 require_once __DIR__ . '/../app/db/users.php';
+require_once __DIR__ . '/../app/db/table_seats.php';
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../lib/security.php';
 
@@ -131,7 +132,35 @@ class LobbySocket implements MessageComponentInterface
                 }
             }
             
-            $becameOnline = $this->presenceService->markOnline($uid, $uname);
+            // Check if user has an active game before marking them online
+            // If they're in a game, they should stay as 'in_game', not be set to 'online'
+            // CRITICAL: Only check for active game if their current status is already 'in_game'
+            // If they're 'online', they've already disconnected from the game, so don't override it
+            $hasActiveGame = false;
+            $currentStatus = $presenceBefore ? ($presenceBefore['status'] ?? 'online') : 'online';
+            
+            // Only check for active game if user is currently 'in_game'
+            // If they're already 'online', they've disconnected from the game, so keep them as 'online'
+            if ($currentStatus === 'in_game') {
+                try {
+                    $activeTableId = db_find_active_table_for_user($this->pdo, $uid);
+                    $hasActiveGame = $activeTableId !== null;
+                    error_log("[LobbySocket] User {$uid} ({$uname}) has status 'in_game', checked active game: " . ($hasActiveGame ? "YES (table #{$activeTableId})" : "NO"));
+                } catch (\Throwable $e) {
+                    error_log("[LobbySocket] Error checking active game for user {$uid}: " . $e->getMessage());
+                }
+            } else {
+                error_log("[LobbySocket] User {$uid} ({$uname}) has status '{$currentStatus}', not checking for active game (already disconnected)");
+            }
+            
+            // Only mark as 'in_game' if they have an active game AND were already 'in_game'
+            // If they're 'online', they've already disconnected, so keep them as 'online'
+            if ($hasActiveGame && $currentStatus === 'in_game') {
+                $becameOnline = $this->presenceService->markInGame($uid, $uname);
+            } else {
+                // Mark as 'online' - either they don't have an active game, or they've already disconnected
+                $becameOnline = $this->presenceService->markOnline($uid, $uname);
+            }
             $shouldTreatAsNewLogin = $becameOnline || $isStalePresence;
 
             $recent = db_get_recent_chat_messages($this->pdo, 'lobby', 0, self::JOIN_HISTORY_SIZE);
@@ -146,21 +175,39 @@ class LobbySocket implements MessageComponentInterface
             ]));
 
             // Get all users with any status (online, in_game, etc.) for the player list
+            // Include active table_id if user is in an active game
             $stmt = $this->pdo->query("
-                SELECT user_id, user_username, status, last_seen_at
-                FROM user_lobby_presence
-                WHERE status IN ('online', 'in_game')
-                ORDER BY user_username
+                SELECT 
+                    ulp.user_id, 
+                    ulp.user_username, 
+                    ulp.status, 
+                    ulp.last_seen_at
+                FROM user_lobby_presence ulp
+                WHERE ulp.status IN ('online', 'in_game')
+                ORDER BY ulp.user_username
             ");
             $allUsers = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
-            $conn->send(json_encode([
-                'type'  => 'online_users',
-                'users' => array_map(fn($u) => [
+            // Fetch active table for each user (using the function we created)
+            $usersWithTables = [];
+            foreach ($allUsers as $u) {
+                try {
+                    $activeTableId = db_find_active_table_for_user($this->pdo, (int)$u['user_id']);
+                } catch (\Throwable $e) {
+                    error_log("[LobbySocket] Error fetching active table for user {$u['user_id']}: " . $e->getMessage());
+                    $activeTableId = null; // Fallback to null on error
+                }
+                $usersWithTables[] = [
                     'id'       => (int)$u['user_id'],
                     'username' => escape_html($u['user_username']),
                     'status'   => $u['status'] ?? 'online',
-                ], $allUsers),
+                    'active_table_id' => $activeTableId, // null if not in active game
+                ];
+            }
+            
+            $conn->send(json_encode([
+                'type'  => 'online_users',
+                'users' => $usersWithTables,
             ]));
 
             // Check if user has other active connections
@@ -211,10 +258,25 @@ class LobbySocket implements MessageComponentInterface
             }
             
             // Always broadcast presence event when user connects (for player list updates)
+            try {
+                $userActiveTable = db_find_active_table_for_user($this->pdo, $uid);
+            } catch (\Throwable $e) {
+                error_log("[LobbySocket] Error fetching active table for user {$uid}: " . $e->getMessage());
+                $userActiveTable = null; // Fallback to null on error
+            }
+            
+            // Get user status from presence record (use presenceBefore if available, otherwise default to 'online')
+            $userStatus = $presenceBefore ? ($presenceBefore['status'] ?? 'online') : 'online';
+            
             $this->broadcastExcept($conn, [
                 'type'   => 'presence',
                 'event'  => 'join',
-                'user'   => ['id' => $uid, 'username' => escape_html($uname)],
+                'user'   => [
+                    'id' => $uid, 
+                    'username' => escape_html($uname),
+                    'status' => $userStatus,
+                    'active_table_id' => $userActiveTable,
+                ],
                 'online' => count($allUsers),
             ]);
             
@@ -398,19 +460,27 @@ class LobbySocket implements MessageComponentInterface
                 }
                 $result = $this->challengeService->send($uid, $targetUser['username']);
                 if (!$result['ok']) {
-                    $from->send(json_encode(['type' => 'error', 'error' => $result['message']]));
+                    $from->send(json_encode([
+                        'type' => 'error',
+                        'error' => $result['message'] ?? 'Failed to send challenge'
+                    ]));
                     break;
                 }
                 $escapedTargetUsername = escape_html($targetUser['username']);
+                $challengeId = (int)($result['challenge_id'] ?? 0);
+                
+                // Send challenge notification to target user
                 $this->sendToUser($toUserId, [
                     'type'         => 'challenge',
                     'from'         => ['id' => $uid, 'username' => escape_html($uname)],
-                    'challenge_id' => $result['challenge_id'],
+                    'challenge_id' => $challengeId,
                 ]);
-                // Send confirmation to sender
+                
+                // Send confirmation to sender with challenge details
                 $from->send(json_encode([
                     'type' => 'challenge_sent',
                     'to'   => ['id' => $toUserId, 'username' => $escapedTargetUsername],
+                    'challenge_id' => $challengeId,
                 ]));
                 // Send chat notification to sender
                 $from->send(json_encode([
@@ -451,6 +521,7 @@ class LobbySocket implements MessageComponentInterface
 
                 if (!$result['ok']) {
                     $from->send(json_encode(['type' => 'error', 'error' => $result['message']]));
+                    error_log("[LobbySocket] Challenge response failed: " . ($result['message'] ?? 'Unknown error'));
                     break;
                 }
 
@@ -471,11 +542,63 @@ class LobbySocket implements MessageComponentInterface
                     'challenge_id' => $challengeId,
                     'action'       => $action,
                     'from'         => ['id' => $uid, 'username' => escape_html($uname)],
-                    'game_id'      => $result['game_id'] ?? null,
+                    'table_id'     => $result['table_id'] ?? null,
                 ]);
                 
-                // Send chat notification to the original challenger if declined
-                if ($action === 'decline' && $fromUserId !== $uid) {
+                // Send challenge_resolved to both users to clear their pending state
+                $this->sendToUser($fromUserId, [
+                    'type'         => 'challenge_resolved',
+                    'challenge_id' => $challengeId,
+                    'action'       => $action,
+                ]);
+                $this->sendToUser($toUserId, [
+                    'type'         => 'challenge_resolved',
+                    'challenge_id' => $challengeId,
+                    'action'       => $action,
+                ]);
+                
+                // If challenge was accepted, redirect both users to the game table
+                if ($action === 'accept') {
+                    $tableId = isset($result['table_id']) ? (int)$result['table_id'] : null;
+                    $gameId = isset($result['game_id']) ? (int)$result['game_id'] : null;
+                    
+                    if ($tableId && $gameId) {
+                        $escapedUname = escape_html($uname);
+                        
+                        // Send GAME_START message to both players
+                        $gameStartMessage = [
+                            'type' => 'GAME_START',
+                            'table_id' => $tableId,
+                            'game_id' => $gameId,
+                            'message' => 'Challenge accepted! Starting game...',
+                        ];
+                        
+                        $this->sendToUser($fromUserId, $gameStartMessage);
+                        $this->sendToUser($toUserId, $gameStartMessage);
+                        
+                        // Also send chat notifications
+                        $this->sendToUser($fromUserId, [
+                            'type'   => 'chat',
+                            'system' => true,
+                            'msg'    => "✅ {$escapedUname} accepted your challenge! Starting game...",
+                            'time'   => date('H:i'),
+                            'created_at' => date('Y-m-d H:i:s'),
+                        ]);
+                        
+                        $from->send(json_encode([
+                            'type'   => 'chat',
+                            'system' => true,
+                            'msg'    => "✅ You accepted the challenge from {$escapedFromUsername}! Starting game...",
+                            'time'   => date('H:i'),
+                            'created_at' => date('Y-m-d H:i:s'),
+                        ]));
+                        
+                        echo "[INFO] Challenge #{$challengeId} accepted - Created table #{$tableId}, game #{$gameId} for users {$fromUserId} and {$toUserId}\n";
+                    } else {
+                        error_log("[LobbySocket] Challenge accepted but missing table_id or game_id. Result: " . json_encode($result));
+                    }
+                } else if ($action === 'decline' && $fromUserId !== $uid) {
+                    // Send chat notification to the original challenger if declined
                     $escapedUname = escape_html($uname);
                     $this->sendToUser($fromUserId, [
                         'type'   => 'chat',
@@ -484,11 +607,6 @@ class LobbySocket implements MessageComponentInterface
                         'time'   => date('H:i'),
                         'created_at' => date('Y-m-d H:i:s'),
                     ]);
-                }
-                
-                if ($action === 'accept') {
-                    echo "✅ {$uname} accepted challenge from {$escapedFromUsername}\n";
-                } else {
                     echo "❌ {$uname} declined challenge from {$escapedFromUsername}\n";
                 }
                 break;
@@ -508,6 +626,7 @@ class LobbySocket implements MessageComponentInterface
                     break;
                 }
                 
+                $fromUserId = (int)$challenge['from_user_id'];
                 $toUserId = (int)$challenge['to_user_id'];
                 $toUsername = db_get_username_by_id($this->pdo, $toUserId) ?? "User#$toUserId";
                 $escapedToUsername = escape_html($toUsername);
@@ -542,6 +661,19 @@ class LobbySocket implements MessageComponentInterface
                     'challenge_id' => $challengeId,
                     'from'         => ['id' => $uid, 'username' => escape_html($uname)],
                 ]);
+                
+                // Send challenge_resolved to both users to clear their pending state
+                $this->sendToUser($fromUserId, [
+                    'type'         => 'challenge_resolved',
+                    'challenge_id' => $challengeId,
+                    'action'       => 'cancelled',
+                ]);
+                $this->sendToUser($toUserId, [
+                    'type'         => 'challenge_resolved',
+                    'challenge_id' => $challengeId,
+                    'action'       => 'cancelled',
+                ]);
+                
                 echo "❌ {$uname} canceled challenge to {$escapedToUsername}\n";
                 break;
 

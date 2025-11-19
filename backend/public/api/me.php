@@ -21,16 +21,13 @@ require_once __DIR__ . '/../../lib/security.php';
 apply_rate_limiting(null, 100, 200, 60);
 
 try {
-    // Validate session using your helper (reads session_id cookie, checks DB)
     $user = requireSession($pdo);
-    
+
     if ($user) {
-        // Re-apply with user ID for user-based limiting
         apply_rate_limiting($user['user_id'], 100, 200, 60);
     }
 
     if (!$user) {
-        // No valid session found
         http_response_code(401);
         echo json_encode([
             'ok' => false,
@@ -39,25 +36,29 @@ try {
         exit;
     }
 
-    // Session valid — return minimal user info (escape username for XSS prevention)
-    $user['username'] = escape_html($user['username']);
+    $normalized = [
+        'id'          => (int)$user['user_id'],
+        'username'    => escape_html($user['username']),
+        'email'       => $user['email'] ?? null,
+        'session_id'  => $user['session_id'] ?? null,
+    ];
+
     echo json_encode([
         'ok' => true,
-        'user' => $user,
+        'user' => $normalized,
     ]);
+
 } catch (Throwable $e) {
-    // Catch any internal error (e.g., DB unavailable)
     error_log('[me.php] ' . $e->getMessage());
     http_response_code(500);
     $response = [
         'ok' => false,
         'message' => 'Server error',
     ];
-    
-    // Only expose error details in debug mode
+
     if (debug_enabled()) {
         $response['detail'] = $e->getMessage();
     }
-    
+
     echo json_encode($response);
 }
