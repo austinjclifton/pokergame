@@ -14,7 +14,7 @@ final class HandEvaluator
      *
      * @param array<string> $cards  (e.g. ["AS", "KD", "QC"])
      * @return array{
-     *   rank_value:int,
+     *   rank_value:int,          // higher is ALWAYS better
      *   hand_name:string,
      *   best_hand:array<string>
      * }
@@ -30,7 +30,7 @@ final class HandEvaluator
             $parsed[] = $this->parseCard($card);
         }
 
-        $bestRankValue = 0;
+        $bestRankValue = PHP_INT_MIN;
         $bestHandName  = 'High Card';
         $bestHandCards = [];
 
@@ -54,12 +54,6 @@ final class HandEvaluator
     /**
      * Compatibility wrapper for WinnerCalculator
      *
-     * WinnerCalculator calls:
-     *   evaluateBestHand($holeCards, $board)
-     *
-     * This wrapper now converts that into:
-     *   evaluate($all7cards)
-     *
      * @param string[] $hole  (2 cards)
      * @param string[] $board (0–5)
      * @return array{
@@ -74,7 +68,7 @@ final class HandEvaluator
         $result = $this->evaluate($cards);
 
         return [
-            'rank'  => $result['rank_value'],   // WinnerCalculator expects numeric rank
+            'rank'  => $result['rank_value'],   // numeric rank, higher is better
             'name'  => $result['hand_name'],
             'cards' => $result['best_hand'],
         ];
@@ -82,7 +76,7 @@ final class HandEvaluator
 
     private function parseCard(string $card): array
     {
-        $suit = substr($card, -1);
+        $suit    = substr($card, -1);
         $rankStr = substr($card, 0, -1);
 
         $rankMap = [
@@ -98,18 +92,18 @@ final class HandEvaluator
 
     private function evaluateFiveCards(array $cards): array
     {
+        // Sort by rank DESC
         usort($cards, fn($a, $b) => $b['rank'] <=> $a['rank']);
 
-        $ranks          = array_column($cards, 'rank');
-        $suits          = array_column($cards, 'suit');
-        $originalCards  = array_column($cards, 'original');
-        $rankCounts     = $this->groupByRank($ranks);
-        $isFlush        = $this->isFlush($suits);
-        $straightInfo   = $this->isStraight($ranks);
+        $ranks         = array_column($cards, 'rank');
+        $suits         = array_column($cards, 'suit');
+        $originalCards = array_column($cards, 'original');
+        $rankCounts    = $this->groupByRank($ranks);
+        $isFlush       = $this->isFlush($suits);
+        $straightInfo  = $this->isStraight($ranks);
 
         // Royal Flush
-        if ($isFlush && $straightInfo['is'] &&
-            $ranks === [14, 13, 12, 11, 10]) {
+        if ($isFlush && $straightInfo['is'] && $ranks === [14, 13, 12, 11, 10]) {
             return [
                 'rank_value' => $this->calculateRankValue(1, [14,13,12,11,10]),
                 'hand_name'  => 'Royal Flush',
@@ -129,22 +123,22 @@ final class HandEvaluator
 
         // Four of a Kind
         if (in_array(4, $rankCounts, true)) {
-            $quad    = array_search(4, $rankCounts);
-            $kicker  = array_search(1, $rankCounts);
+            $quad   = (int)array_search(4, $rankCounts, true);
+            $kicker = (int)array_search(1, $rankCounts, true);
             return [
-                'rank_value' => $this->calculateRankValue(3, [(int)$quad,(int)$kicker]),
-                'hand_name'  => "Four {$this->rankToString((int)$quad)}s",
+                'rank_value' => $this->calculateRankValue(3, [$quad, $kicker]),
+                'hand_name'  => "Four {$this->rankToString($quad)}s",
                 'cards'      => $originalCards,
             ];
         }
 
         // Full House
         if (in_array(3, $rankCounts, true) && in_array(2, $rankCounts, true)) {
-            $trips = array_search(3, $rankCounts);
-            $pair  = array_search(2, $rankCounts);
+            $trips = (int)array_search(3, $rankCounts, true);
+            $pair  = (int)array_search(2, $rankCounts, true);
             return [
-                'rank_value' => $this->calculateRankValue(4, [(int)$trips,(int)$pair]),
-                'hand_name'  => "{$this->rankToString((int)$trips)}s full of {$this->rankToString((int)$pair)}s",
+                'rank_value' => $this->calculateRankValue(4, [$trips, $pair]),
+                'hand_name'  => "{$this->rankToString($trips)}s full of {$this->rankToString($pair)}s",
                 'cards'      => $originalCards,
             ];
         }
@@ -170,23 +164,23 @@ final class HandEvaluator
 
         // Trips
         if (in_array(3, $rankCounts, true)) {
-            $trips   = array_search(3, $rankCounts);
-            $kickers = array_keys(array_filter($rankCounts, fn($c)=>$c===1));
+            $trips   = (int)array_search(3, $rankCounts, true);
+            $kickers = array_keys(array_filter($rankCounts, fn($c) => $c === 1));
             rsort($kickers);
             return [
-                'rank_value' => $this->calculateRankValue(7, [(int)$trips,$kickers[0],$kickers[1]]),
-                'hand_name'  => "Three {$this->rankToString((int)$trips)}s",
+                'rank_value' => $this->calculateRankValue(7, [$trips, $kickers[0], $kickers[1]]),
+                'hand_name'  => "Three {$this->rankToString($trips)}s",
                 'cards'      => $originalCards,
             ];
         }
 
         // Two Pair
-        $pairs = array_keys(array_filter($rankCounts, fn($c)=>$c===2));
+        $pairs = array_keys(array_filter($rankCounts, fn($c) => $c === 2));
         if (count($pairs) === 2) {
-            rsort($pairs);
-            $kicker = array_search(1, $rankCounts);
+            rsort($pairs); // [topPair, lowPair]
+            $kicker = (int)array_search(1, $rankCounts, true);
             return [
-                'rank_value' => $this->calculateRankValue(8, [(int)$pairs[0],(int)$pairs[1],(int)$kicker]),
+                'rank_value' => $this->calculateRankValue(8, [(int)$pairs[0], (int)$pairs[1], $kicker]),
                 'hand_name'  => "{$this->rankToString((int)$pairs[0])}s and {$this->rankToString((int)$pairs[1])}s",
                 'cards'      => $originalCards,
             ];
@@ -194,12 +188,12 @@ final class HandEvaluator
 
         // One Pair
         if (count($pairs) === 1) {
-            $pair    = $pairs[0];
-            $kickers = array_keys(array_filter($rankCounts, fn($c)=>$c===1));
+            $pair    = (int)$pairs[0];
+            $kickers = array_keys(array_filter($rankCounts, fn($c) => $c === 1));
             rsort($kickers);
             return [
-                'rank_value' => $this->calculateRankValue(9, [(int)$pair,$kickers[0],$kickers[1],$kickers[2]]),
-                'hand_name'  => "Pair of {$this->rankToString((int)$pair)}s",
+                'rank_value' => $this->calculateRankValue(9, [$pair, $kickers[0], $kickers[1], $kickers[2]]),
+                'hand_name'  => "Pair of {$this->rankToString($pair)}s",
                 'cards'      => $originalCards,
             ];
         }
@@ -212,14 +206,33 @@ final class HandEvaluator
         ];
     }
 
+    /**
+     * Encode category + kickers into a single INT where:
+     *   - Category (handType) ALWAYS dominates
+     *   - Kickers break ties within the same category
+     *
+     * handType: 1 = Royal Flush (best) ... 10 = High Card (worst)
+     */
     private function calculateRankValue(int $handType, array $values): int
     {
-        $inverted = 11 - $handType;
-        $value    = $inverted;
+        // Stronger handType → larger category score
+        // 1 → 10, 2 → 9, ... 10 → 1
+        $category = 11 - $handType;
 
+        // Give the category a huge lead so kickers can never overtake it
+        // Max kicker encoding is on the order of ~1.5e9, so 1e10 is safe.
+        $value = $category * 10000000000;
+
+        // Encode up to 5 kicker slots (more than enough for any 5-card hand)
+        $multiplier = 100000000;
         foreach ($values as $v) {
-            $value = $value * 15 + $v;
+            $value += $v * $multiplier;
+            $multiplier = intdiv($multiplier, 100); // next slot two digits down
+            if ($multiplier === 0) {
+                break; // safety; shouldn't happen with 5 or fewer values
+            }
         }
+
         return $value;
     }
 
@@ -235,52 +248,58 @@ final class HandEvaluator
 
     private function isStraight(array $ranks): array
     {
-        $u = array_unique($ranks);
-        if (count($u) !== 5) return ['is'=>false,'high'=>0];
+        $u = array_values(array_unique($ranks));
+        if (count($u) !== 5) {
+            return ['is' => false, 'high' => 0];
+        }
 
         sort($u);
 
         // Regular straight
         $reg = true;
-        for ($i=1;$i<5;$i++) {
-            if ($u[$i] !== $u[$i-1] + 1) {
+        for ($i = 1; $i < 5; $i++) {
+            if ($u[$i] !== $u[$i - 1] + 1) {
                 $reg = false;
                 break;
             }
         }
         if ($reg) {
-            return ['is'=>true,'high'=>max($u)];
+            return ['is' => true, 'high' => max($u)];
         }
 
         // Wheel (A-2-3-4-5)
-        if ($u === [2,3,4,5,14]) {
-            return ['is'=>true,'high'=>5];
+        if ($u === [2, 3, 4, 5, 14]) {
+            return ['is' => true, 'high' => 5];
         }
 
-        return ['is'=>false,'high'=>0];
+        return ['is' => false, 'high' => 0];
     }
 
     private function rankToString(int $rank): string
     {
         return [
-            14=>'Ace', 13=>'King', 12=>'Queen', 11=>'Jack', 10=>'Ten'
+            14 => 'Ace', 13 => 'King', 12 => 'Queen', 11 => 'Jack', 10 => 'Ten',
         ][$rank] ?? (string)$rank;
     }
 
+    /**
+     * @return array<int, array<int, mixed>>
+     */
     private function getCombinations(array $array, int $k): array
     {
         if ($k === 0) return [[]];
         if (empty($array)) return [];
 
         $head = $array[0];
-        $tail = array_slice($array,1);
+        $tail = array_slice($array, 1);
 
-        $with = $this->getCombinations($tail, $k-1);
+        $with = $this->getCombinations($tail, $k - 1);
         foreach ($with as &$combo) {
             array_unshift($combo, $head);
         }
 
         $without = $this->getCombinations($tail, $k);
+
         return array_merge($with, $without);
     }
 }

@@ -44,7 +44,7 @@ final class WinnerCalculator
     public function calculate(array $players, array $board): array
     {
         //
-        // 1. Compute total pot
+        // 1. Compute total pot from contributions
         //
         $totalPot = 0;
         foreach ($players as $p) {
@@ -64,7 +64,7 @@ final class WinnerCalculator
         // 2. Evaluate hands for non-folded players with >0 contribution
         //
         $handRanks = [];   // seat => detail
-        $rankVals  = [];   // seat => numeric rank_value
+        $rankVals  = [];   // seat => numeric rank_value (higher is better)
 
         foreach ($players as $p) {
             $seat   = (int)$p['seat'];
@@ -72,7 +72,7 @@ final class WinnerCalculator
             $c      = max(0, (int)$p['contribution']);
 
             if ($folded || $c <= 0) {
-                // Folded / no contribution cannot win
+                // Folded / no contribution cannot win this pot
                 continue;
             }
 
@@ -93,18 +93,18 @@ final class WinnerCalculator
         // Safety: must have at least 1 contender
         //
         if (empty($rankVals)) {
-            // All players folded? Should be caught earlier but handle safely.
-            $payouts = [];
+            // All players folded or zero contribution. Caller should normally
+            // handle this earlier, but we fail safe with no payouts.
             return [
                 'totalPot' => $totalPot,
-                'payouts'  => $payouts,
+                'payouts'  => [],
                 'pots'     => [],
                 'handRanks'=> array_values($handRanks),
             ];
         }
 
         //
-        // 3. Determine winner(s)
+        // 3. Determine winner(s) based on rank_value
         //
         $bestRank = max($rankVals);  // higher is better
         $winnerSeats = [];
@@ -116,7 +116,7 @@ final class WinnerCalculator
         }
 
         //
-        // 4. Assign payouts
+        // 4. Assign payouts (guaranteed chip conservation)
         //
         $payouts = [];
 
@@ -133,16 +133,28 @@ final class WinnerCalculator
 
         } else {
             //
-            // EXACT tie → split pot evenly
+            // Exact tie → split pot as evenly as possible
+            // Any odd chip(s) are assigned deterministically
+            // (here: to the lowest seat number).
             //
-            $share = intdiv($totalPot, count($winnerSeats));
-            foreach ($winnerSeats as $s) {
-                $payouts[$s] = $share;
+            $numWinners = count($winnerSeats);
+            $baseShare  = intdiv($totalPot, $numWinners);
+            $remainder  = $totalPot - ($baseShare * $numWinners);
+
+            // Optional: sort winner seats to make remainder distribution predictable
+            sort($winnerSeats, SORT_NUMERIC);
+
+            foreach ($winnerSeats as $index => $s) {
+                $payouts[$s] = $baseShare;
+                if ($remainder > 0) {
+                    $payouts[$s] += 1;
+                    $remainder--;
+                }
             }
         }
 
         //
-        // 5. Chip conservation: payouts must equal pot
+        // 5. Chip conservation check
         //
         $check = array_sum($payouts);
         if ($check !== $totalPot) {

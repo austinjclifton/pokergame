@@ -69,6 +69,8 @@ final class ActionProcessor
         // Execute via BettingEngine
         // (mutates: bet, stack, contribution, totalInvested, allIn)
         // ---------------------------------------------------------
+        $oldPot = $state->pot;
+        $oldContrib = $player->contribution;
         $result = BettingEngine::executeAction(
             $player,
             $action,
@@ -87,7 +89,11 @@ final class ActionProcessor
         // ---------------------------------------------------------
         if (isset($result['chipsUsed'])) {
             $chips = (int)$result['chipsUsed'];
+            // CHIP TRACE
+            error_log("[CHIP TRACE] BETTING: " . __FILE__ . ":" . __LINE__ . " action={$action->value} amount={$chips} oldContrib={$oldContrib} newContrib={$player->contribution} pot BEFORE={$oldPot}");
             $state->pot += $chips;
+            // CHIP TRACE
+            error_log("[CHIP TRACE] BETTING: " . __FILE__ . ":" . __LINE__ . " pot AFTER={$state->pot}");
         }
 
         // ---------------------------------------------------------

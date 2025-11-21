@@ -54,10 +54,19 @@ final class BettingEngine
 
                 $chips = min($callAmount, $availableChips);
 
+                // CHIP TRACE
+                $oldStack = $player->stack;
+                $oldContrib = $player->contribution;
+                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} BEFORE stack={$oldStack} contribution={$oldContrib}");
+                error_log("[CHIP TRACE] BETTING: action=CALL amount={$chips} oldContrib={$oldContrib} newContrib=" . ($oldContrib + $chips));
+
                 $player->stack         -= $chips;
                 $player->bet           += $chips;
                 $player->totalInvested += $chips;
                 $player->contribution  += $chips;
+
+                // CHIP TRACE
+                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} AFTER stack={$player->stack} contribution={$player->contribution}");
 
                 if ($player->stack === 0) {
                     $player->allIn = true;
@@ -83,10 +92,19 @@ final class BettingEngine
 
                 $chips = $amount;
 
+                // CHIP TRACE
+                $oldStack = $player->stack;
+                $oldContrib = $player->contribution;
+                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} BEFORE stack={$oldStack} contribution={$oldContrib}");
+                error_log("[CHIP TRACE] BETTING: action=BET amount={$chips} oldContrib={$oldContrib} newContrib=" . ($oldContrib + $chips));
+
                 $player->stack         -= $chips;
                 $player->bet           += $chips;
                 $player->totalInvested += $chips;
                 $player->contribution  += $chips;
+
+                // CHIP TRACE
+                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} AFTER stack={$player->stack} contribution={$player->contribution}");
 
                 if ($player->stack === 0) {
                     $player->allIn = true;
@@ -119,10 +137,19 @@ final class BettingEngine
                     return ['ok' => false, 'message' => 'Not enough chips'];
                 }
 
+                // CHIP TRACE
+                $oldStack = $player->stack;
+                $oldContrib = $player->contribution;
+                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} BEFORE stack={$oldStack} contribution={$oldContrib}");
+                error_log("[CHIP TRACE] BETTING: action=RAISE amount={$chipsNeeded} oldContrib={$oldContrib} newContrib=" . ($oldContrib + $chipsNeeded));
+
                 $player->stack         -= $chipsNeeded;
                 $player->bet           += $chipsNeeded;
                 $player->totalInvested += $chipsNeeded;
                 $player->contribution  += $chipsNeeded;
+
+                // CHIP TRACE
+                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} AFTER stack={$player->stack} contribution={$player->contribution}");
 
                 if ($player->stack === 0) {
                     $player->allIn = true;
@@ -144,10 +171,19 @@ final class BettingEngine
 
                 $chips = $availableChips;
 
+                // CHIP TRACE
+                $oldStack = $player->stack;
+                $oldContrib = $player->contribution;
+                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} BEFORE stack={$oldStack} contribution={$oldContrib}");
+                error_log("[CHIP TRACE] BETTING: action=ALLIN amount={$chips} oldContrib={$oldContrib} newContrib=" . ($oldContrib + $chips));
+
                 $player->stack          = 0;
                 $player->bet           += $chips;
                 $player->totalInvested += $chips;
                 $player->contribution  += $chips;
+
+                // CHIP TRACE
+                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} AFTER stack={$player->stack} contribution={$player->contribution}");
                 $player->allIn          = true;
                 $player->actedThisStreet = true;
 
@@ -281,20 +317,28 @@ final class BettingEngine
 
         // Small blind
         $s = min($sbAmount, $sb->stack);
+        // CHIP TRACE
+        error_log("[CHIP TRACE] BLIND: SB deduction " . __FILE__ . ":" . __LINE__ . " seat={$smallBlindSeat} user={$sb->user_id} amount={$s} BEFORE stack={$sb->stack}");
         $sb->stack          -= $s;
         $sb->bet            += $s;
         $sb->totalInvested  += $s;
         $sb->contribution   += $s;
         $pot                += $s;
+        // CHIP TRACE
+        error_log("[CHIP TRACE] BLIND: SB deduction " . __FILE__ . ":" . __LINE__ . " seat={$smallBlindSeat} user={$sb->user_id} AFTER stack={$sb->stack} contribution={$sb->contribution}");
         if ($sb->stack === 0) $sb->allIn = true;
 
         // Big blind
         $b = min($bbAmount, $bb->stack);
+        // CHIP TRACE
+        error_log("[CHIP TRACE] BLIND: BB deduction " . __FILE__ . ":" . __LINE__ . " seat={$bigBlindSeat} user={$bb->user_id} amount={$b} BEFORE stack={$bb->stack}");
         $bb->stack          -= $b;
         $bb->bet            += $b;
         $bb->totalInvested  += $b;
         $bb->contribution   += $b;
         $pot                += $b;
+        // CHIP TRACE
+        error_log("[CHIP TRACE] BLIND: BB deduction " . __FILE__ . ":" . __LINE__ . " seat={$bigBlindSeat} user={$bb->user_id} AFTER stack={$bb->stack} contribution={$bb->contribution}");
         if ($bb->stack === 0) $bb->allIn = true;
 
         return [

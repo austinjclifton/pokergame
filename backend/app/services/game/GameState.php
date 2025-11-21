@@ -111,6 +111,13 @@ final class GameState
     public function resetPot(): void
     {
         // Reset pot and betting state for a *new street*, not a new hand
+        // CHIP TRACE
+        $contributions = [];
+        foreach ($this->players as $seat => $p) {
+            $contributions[$seat] = $p->contribution;
+        }
+        error_log("[CHIP TRACE] RESET POT " . __FILE__ . ":" . __LINE__ . " oldPot={$this->pot} contributions=" . json_encode($contributions) . " (resetting betting state for new street)");
+        
         $this->currentBet      = 0;
         $this->lastRaiseSeat   = -1;
         $this->lastRaiseAmount = 0;

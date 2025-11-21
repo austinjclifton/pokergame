@@ -108,6 +108,9 @@ final class GameSocket implements MessageComponentInterface
     /** @var array<int, true> table_id => rebuilding flag */
     protected array $rebuildingTables = [];
 
+    /** @var array<int, bool> table_id => bootstrapped flag */
+    protected array $tableBootstrapped = [];
+
     public function __construct(PDO $pdo)
     {
         $this->clients = new \SplObjectStorage();
@@ -1060,40 +1063,69 @@ final class GameSocket implements MessageComponentInterface
     private function ensureHandBootstrapped(int $tableId, ?int $gameId): void
     {
         $svc = $this->gameServices[$tableId] ?? null;
-        if (!$svc) return;
-
-        // If players already exist, do nothing
-        $snapshot = $svc->getSnapshot();
-        $hasPlayers = isset($snapshot['players']) && \is_array($snapshot['players']) && \count($snapshot['players']) > 0;
-        if ($hasPlayers) return;
-
+        if (!$svc) {
+            return;
+        }
+    
+        // --- NEW: hard guard to prevent calling startHand twice per table ---
+        if (!empty($this->tableBootstrapped[$tableId])) {
+            // Already bootstrapped this table in this process
+            return;
+        }
+    
+        // If players already exist, we consider the table bootstrapped
+        $snapshot   = $svc->getSnapshot();
+        $hasPlayers = isset($snapshot['players'])
+            && \is_array($snapshot['players'])
+            && \count($snapshot['players']) > 0;
+    
+        if ($hasPlayers) {
+            $this->tableBootstrapped[$tableId] = true;
+            return;
+        }
+    
         // Pull seated players and give them a starting stack (or read from DB if you store stacks)
-        $seats = db_get_table_seats($this->pdo, $tableId);
-        $active = array_values(array_filter($seats, fn($r) => $r['user_id'] !== null && $r['left_at'] === null));
-
-        if (\count($active) < 2) return;
-
-        // Example: default stacks 2000 (replace with your real source of chips)
-        $players = array_map(fn($r) => [
-            'seat'  => (int)$r['seat_no'],
-            'stack' => 2000,
-        ], $active);
-
+        $seats  = db_get_table_seats($this->pdo, $tableId);
+        $active = array_values(array_filter(
+            $seats,
+            fn($r) => $r['user_id'] !== null && $r['left_at'] === null
+        ));
+    
+        if (\count($active) < 2) {
+            // Not enough active seated players to start a hand
+            return;
+        }
+    
+        // Example: default stacks 2000 (replace with your real source of chips if needed)
+        $players = array_map(
+            fn($r) => [
+                'seat'  => (int)$r['seat_no'],
+                'stack' => 2000,
+            ],
+            $active
+        );
+    
         // Load players first, then start hand
         $svc->loadPlayers($players);
-        $state = $svc->startHand();
+        $state = $svc->startHand(); // your guarded GameService::startHand()
+    
         // startHand() returns state array directly (no 'ok' key)
         if (empty($state)) {
             error_log('[GameSocket] Failed to start hand: returned empty state');
             return;
         }
-
+    
         // Persist initial snapshot if you want
         if ($gameId = $svc->getGameId()) {
-            $this->persistenceService->saveSnapshot($gameId, $svc->getSnapshot(), $svc->getVersion());
+            $this->persistenceService->saveSnapshot(
+                $gameId,
+                $svc->getSnapshot(),
+                $svc->getVersion()
+            );
         }
-
+    
+        $this->tableBootstrapped[$tableId] = true;
+    
         echo "[GameSocket] Hand bootstrapped at table #{$tableId}\n";
-    }
-
+    }    
 }

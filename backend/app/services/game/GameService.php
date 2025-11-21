@@ -18,6 +18,9 @@ final class GameService
     private ?int $gameId = null;
     private int $version = 0;
 
+    /** Hard guard to prevent multiple startHand calls */
+    private bool $handBootstrapped = false;
+
     public function __construct(
         GamePersistence $persistence,
         int $smallBlind = 10,
@@ -36,8 +39,11 @@ final class GameService
     public function getGameId(): ?int { return $this->gameId; }
     public function getVersion(): int { return $this->version; }
     public function setVersion(int $v): void { $this->version = $v; }
-
     public function getSnapshot(): array { return $this->state->toArray(); }
+
+    public function isHandBootstrapped(): bool { return $this->handBootstrapped; }
+    public function markHandBootstrapped(): void { $this->handBootstrapped = true; }
+    public function clearBootstrapFlag(): void { $this->handBootstrapped = false; }
 
     // ---------------------------------------------------------------------
     // Load seated players
@@ -48,16 +54,23 @@ final class GameService
     }
 
     // ---------------------------------------------------------------------
-    // Start a new hand
+    // Start a new hand (GUARDED)
     // ---------------------------------------------------------------------
     public function startHand(?int $seed = null): array
     {
+        if ($this->handBootstrapped) {
+            error_log("[GameService] Ignored duplicate startHand() — already bootstrapped");
+            return $this->getSnapshot();
+        }
+
         HandStarter::startHand(
             $this->state,
             $this->smallBlind,
             $this->bigBlind,
             $seed
         );
+
+        $this->handBootstrapped = true;
 
         return $this->persistence->snapshot($this->state);
     }
@@ -67,29 +80,25 @@ final class GameService
     // ---------------------------------------------------------------------
     public function applyAction(int $seat, string $action, int $amount = 0): array
     {
-        // Convert to enum
         try {
             $a = ActionType::from(strtolower($action));
         } catch (\ValueError) {
             return ['ok' => false, 'message' => 'Invalid action'];
         }
 
-        //
-        // ---------------- 1. Run ActionProcessor -------------------
-        //
+        // 1. Apply betting or fold
         $result = ActionProcessor::apply($this->state, $seat, $a, $amount);
-
         if (!($result['ok'] ?? false)) {
-            return $result;   // invalid move
+            return $result;
         }
 
-        //
-        // ---------------- 2. Immediate fold win --------------------
-        //
+        // 2. Fold → hand ends
         if ($result['handEnded'] ?? false) {
             $summary = $this->buildFoldSummary();
             $state   = $this->persistence->snapshot($this->state);
 
+            $this->handBootstrapped = false;
+
             return [
                 'ok'        => true,
                 'state'     => $state,
@@ -98,19 +107,16 @@ final class GameService
             ];
         }
 
-        //
-        // ---------------- 3. Phase progression ---------------------
-        //
-        $evaluator = new HandEvaluator();
-        $phaseInfo = PhaseEngine::advance($this->state, $evaluator);
+        // 3. Phase progression
+        $eval      = new HandEvaluator();
+        $phaseInfo = PhaseEngine::advance($this->state, $eval);
 
-        //
-        // ---------------- 4. Showdown trigger ----------------------
-        //
+        // 4. Showdown
         if ($phaseInfo !== null && ($phaseInfo['handEnded'] ?? false)) {
             $summary = $this->runShowdownSettlement();
+            $state   = $this->persistence->snapshot($this->state);
 
-            $state = $this->persistence->snapshot($this->state);
+            $this->handBootstrapped = false;
 
             return [
                 'ok'        => true,
@@ -120,9 +126,7 @@ final class GameService
             ];
         }
 
-        //
-        // ---------------- 5. Normal action -------------------------
-        //
+        // 5. Normal action
         $state = $this->persistence->snapshot($this->state);
 
         return [
@@ -141,6 +145,9 @@ final class GameService
         return $this->startHand($seed);
     }
 
+    // ---------------------------------------------------------------------
+    // Legal helpers
+    // ---------------------------------------------------------------------
     public function getSeatCards(int $seat): array
     {
         return $this->state->players[$seat]->cards ?? [];
@@ -148,12 +155,8 @@ final class GameService
 
     public function getLegalActionsForSeat(int $seat): array
     {
-        if (!isset($this->state->players[$seat])) {
-            return [];
-        }
-        if ($this->state->actionSeat !== $seat) {
-            return [];
-        }
+        if (!isset($this->state->players[$seat])) return [];
+        if ($this->state->actionSeat !== $seat) return [];
 
         $p = $this->state->players[$seat];
 
@@ -166,28 +169,17 @@ final class GameService
     }
 
     // ---------------------------------------------------------------------
-    // INTERNAL HELPERS
+    // INTERNAL — Fold settlement
     // ---------------------------------------------------------------------
-
-    /**
-     * Called when exactly one player remains after a fold.
-     * Assigns the pot to that seat.
-     */
     private function buildFoldSummary(): array
     {
-        // Only one active player left
-        $active = array_filter(
-            $this->state->players,
-            fn(PlayerState $p) => !$p->folded
-        );
+        $active = array_filter($this->state->players, fn(PlayerState $p) => !$p->folded);
         $winnerSeat = array_keys($active)[0];
 
         $amount = $this->state->pot;
+        $winner = $this->state->players[$winnerSeat];
 
-        // Move chips
-        $this->state->players[$winnerSeat]->stack += $amount;
-
-        // Reset pot + contributions
+        $winner->stack += $amount;
         $this->state->resetPot();
 
         return [
@@ -204,17 +196,15 @@ final class GameService
         ];
     }
 
-    /**
-     * Run full showdown → WinnerCalculator → apply stack changes → summary
-     * FIX THIS ASAP IT IS NOT WORKING AS EXPECTED
-     */
+    // ---------------------------------------------------------------------
+    // INTERNAL — Showdown settlement
+    // ---------------------------------------------------------------------
     private function runShowdownSettlement(): array
     {
-        // Prepare input for WinnerCalculator
-        $playersForCalc = [];
+        $input = [];
 
         foreach ($this->state->players as $seat => $p) {
-            $playersForCalc[] = [
+            $input[] = [
                 'seat'        => $seat,
                 'user_id'     => $p->user_id,
                 'cards'       => $p->cards,
@@ -225,12 +215,9 @@ final class GameService
 
         $eval = new HandEvaluator();
         $calc = new WinnerCalculator($eval);
+        $wc   = $calc->calculate($input, $this->state->board);
 
-        $wc = $calc->calculate($playersForCalc, $this->state->board);
-
-        //
         // Apply payouts
-        //
         foreach ($this->state->players as $seat => $p) {
             $delta = $wc['payouts'][$seat] ?? 0;
             if ($delta > 0) {
@@ -238,22 +225,14 @@ final class GameService
             }
         }
 
-        //
-        // Reset pot + bets + contributions
-        //
         $this->state->resetPot();
 
-        //
-        // Build summary
-        //
-        $summaryWinners = [];
-
+        $winners = [];
         foreach ($wc['handRanks'] as $info) {
             $seat = $info['seat'];
             $amt  = $wc['payouts'][$seat] ?? 0;
-
             if ($amt > 0) {
-                $summaryWinners[] = [
+                $winners[] = [
                     'seat'            => $seat,
                     'amount'          => $amt,
                     'handDescription' => $info['name'],
@@ -267,7 +246,7 @@ final class GameService
             'reason'  => 'showdown',
             'pot'     => $wc['totalPot'],
             'board'   => $this->state->board,
-            'winners' => $summaryWinners,
+            'winners' => $winners,
         ];
     }
 }

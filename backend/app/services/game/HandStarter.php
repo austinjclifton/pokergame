@@ -33,6 +33,9 @@ final class HandStarter
         // Reset global state
         $state->board          = [];
         $state->phase          = Phase::PREFLOP;
+        // CHIP TRACE
+        $oldPot = $state->pot;
+        error_log("[CHIP TRACE] RESET POT " . __FILE__ . ":" . __LINE__ . " oldPot={$oldPot} resetting to 0 (new hand start)");
         $state->pot            = 0;
         $state->currentBet     = 0;
         $state->lastRaiseSeat  = -1;
