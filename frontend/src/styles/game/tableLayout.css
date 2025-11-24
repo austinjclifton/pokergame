@@ -1,0 +1,35 @@
+/* ========== GAME TABLE LAYOUT (CLEAN 1v1) ========== */
+
+.game-table-container-simple {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  gap: 2rem;
+  min-height: 400px;
+}
+
+/* Side-by-side seat row */
+.two-player-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: stretch;
+  gap: 1rem;
+  flex-wrap: nowrap;
+}
+
+.seat-wrapper-inline {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Board area */
+.center-board-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}

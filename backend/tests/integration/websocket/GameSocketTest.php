@@ -163,7 +163,6 @@ final class GameSocketTest extends TestCase
         require_once __DIR__ . '/../../../app/services/game/GameService.php';
         require_once __DIR__ . '/../../../app/services/game/cards/DealerService.php';
         require_once __DIR__ . '/../../../app/services/game/cards/HandEvaluator.php';
-        require_once __DIR__ . '/../../../app/db/game_actions.php';
         require_once __DIR__ . '/../../../app/db/games.php';
         require_once __DIR__ . '/../../../app/db/users.php';
 

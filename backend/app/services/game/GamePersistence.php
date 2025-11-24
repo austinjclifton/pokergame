@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../db/game_snapshots.php';
-require_once __DIR__ . '/../../db/game_actions.php';
+require_once __DIR__ . '/../../db/game_actions.php'; // only for db_increment_game_version()
 require_once __DIR__ . '/GameState.php';
 
 final class GamePersistence
@@ -17,33 +17,12 @@ final class GamePersistence
     }
 
     /**
-     * Insert an action and bump version.
-     *
-     * @param int         $gameId
-     * @param int         $version
-     * @param int|null    $actorSeat
-     * @param string      $actionType
-     * @param int         $amount
-     * @param array       $data
-     * @return bool
+     * NO ACTION LOGGING ANYMORE.
+     * We simply bump the game version (optional) and rely on snapshots only.
      */
-    public function recordAction(
-        int $gameId,
-        int $version,
-        ?int $actorSeat,
-        string $actionType,
-        int $amount,
-        array $data
-    ): bool {
-        return db_insert_action(
-            $this->pdo,
-            $gameId,
-            $version,
-            $actorSeat,
-            $actionType,
-            $amount,
-            $data
-        );
+    public function bumpVersion(int $gameId): int
+    {
+        return db_increment_game_version($this->pdo, $gameId);
     }
 
     /**
@@ -67,7 +46,7 @@ final class GamePersistence
     }
 
     /**
-     * Write a manual snapshot (e.g., after HAND_START or HAND_END).
+     * Write a forced snapshot (e.g., at HAND_START or HAND_END)
      */
     public function snapshotForced(int $gameId, int $version, array $state): void
     {
@@ -75,7 +54,7 @@ final class GamePersistence
     }
 
     /**
-     * Alias for snapshotForced (for compatibility with GameSocket)
+     * Alias for compatibility with GameSocket
      */
     public function saveSnapshot(int $gameId, array $state, int $version): void
     {
@@ -83,7 +62,7 @@ final class GamePersistence
     }
 
     /**
-     * Load last snapshot
+     * Load the most recent snapshot
      */
     public function loadLatest(int $gameId): ?array
     {
@@ -91,16 +70,7 @@ final class GamePersistence
     }
 
     /**
-     * Replay rebuild state
-     */
-    public function rebuild(int $gameId, GameService $engine): array
-    {
-        return db_rebuild_state($this->pdo, $gameId, $engine);
-    }
-
-    /**
-     * Convert GameState to array (for getState() calls)
-     * This doesn't persist - just converts state to array format
+     * Convert GameState object to array
      */
     public function snapshot(GameState $state): array
     {

@@ -1,0 +1,220 @@
+/* ========== LIGHT MODE ========== */
+
+body.light .game-page {
+  background-color: #fafafa;
+  color: #111;
+}
+
+body.light .game-header h1 {
+  color: #111;
+}
+
+body.light .game-status {
+  color: #333;
+}
+
+body.light .leave-button {
+  background: #e0e0e0;
+  color: #111;
+}
+
+body.light .leave-button:hover {
+  background: #d0d0d0;
+}
+
+body.light .game-error {
+  background: rgba(239, 83, 80, 0.1);
+  color: #c62828;
+}
+
+body.light .game-phase {
+  color: #666;
+}
+
+body.light .pot-display {
+  color: #333;
+}
+
+body.light .pot-label {
+  color: #666;
+}
+
+body.light .pot-amount {
+  color: #00bcd4;
+}
+
+body.light .community-placeholder {
+  color: #999;
+}
+
+body.light .seat {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+body.light .seat-name {
+  color: #111;
+}
+
+body.light .seat-stack {
+  color: #666;
+}
+
+body.light .seat-hand {
+  color: #666;
+}
+
+body.light .game-chat-panel {
+  background: rgba(250, 250, 250, 0.98);
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+body.light .game-chat-box {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+body.light .game-chat-header {
+  color: #111;
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+body.light .game-chat-message {
+  color: #333;
+}
+
+body.light .game-chat-sender {
+  color: #00bcd4;
+}
+
+body.light .game-chat-timestamp {
+  color: #666;
+}
+
+body.light .game-chat-input {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #111;
+}
+
+body.light .game-chat-input:focus {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: #00bcd4;
+}
+
+body.light .action-bar {
+  background: rgba(250, 250, 250, 0.98);
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+body.light .action-controls {
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+body.light .action-controls-label {
+  color: #666;
+}
+
+body.light .action-number-input {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.2);
+  color: #111;
+}
+
+body.light .action-number-input:focus {
+  border-color: #00bcd4;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+body.light .action-slider {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+body.light .action-amount-display {
+  color: #00bcd4;
+}
+
+body.light .action-btn {
+  background: #e8e8e8;
+  color: #111;
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+body.light .action-btn:hover:not(:disabled) {
+  background: #d8d8d8;
+  border-color: rgba(0, 0, 0, 0.25);
+}
+
+body.light .action-btn.active {
+  background: #00bcd4;
+  color: #fff;
+  border-color: #00bcd4;
+}
+
+body.light .action-btn.active:hover:not(:disabled) {
+  background: #00acc1;
+  border-color: #00acc1;
+}
+
+body.light .game-chat-empty {
+  color: #999;
+}
+
+body.light .game-chat-input-row {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+body.light .chat-notification-badge {
+  border-color: #e8e8e8;
+}
+
+body.light .game-chat-header:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+body.light .game-chat-toggle-button {
+  color: #111;
+}
+
+body.light .game-chat-toggle-button:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+body.light .bet-slider {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+body.light .my-hole-cards {
+  background: rgba(250, 250, 250, 0.95);
+  border-color: rgba(0, 188, 212, 0.3);
+}
+
+body.light .hole-cards-label {
+  color: #666;
+}
+
+body.light .flip-cards-btn {
+  background: #e0e0e0;
+  color: #111;
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+body.light .flip-cards-btn:hover {
+  background: #00bcd4;
+  color: #fff;
+  border-color: #00bcd4;
+}
+
+body.light .waiting-message {
+  color: #666;
+}
+
+body.light .flip-cards-btn-seat {
+  background: #e0e0e0;
+  color: #111;
+}
+
+body.light .flip-cards-btn-seat:hover {
+  background: #00bcd4;
+  color: #fff;
+}
+

@@ -5,54 +5,147 @@ import { parseCard } from "../../utils/cardParser";
 import "../../styles/game.css";
 
 /**
- * HandResultOverlay - Displays hand summary when a hand ends
- * Shows both players' cards, hand descriptions, and chip deltas
+ * HandResultOverlay - FINAL VERSION
+ *
+ * Two-row winner display:
+ *   1. Winner's two hole cards (always shown, highlight if part of best 5)
+ *   2. The 5 board cards (highlight best-hand cards)
+ *
+ * Includes a Dismiss button:
+ *   - Overlay does NOT auto close
+ *   - User must click "Continue"
+ *   - Game can still auto-start next hand underneath
  */
-export default function HandResultOverlay({ summary, currentUserSeat }) {
+export default function HandResultOverlay({
+  summary,
+  currentUserSeat,
+  onDismiss, // <-- NEW
+}) {
   if (!summary) return null;
 
-  const { reason, board, pot, players, winners } = summary;
-  const winnerSeats = new Set((winners || []).map((w) => w.seat));
+  const {
+    reason,
+    board = [],
+    pot = 0,
+    players = {},
+    winners = [],
+  } = summary;
 
-  // Calculate chip deltas for each player
+  // ---------------------------------------------------------
+  // Best-hand lookup per seat
+  // ---------------------------------------------------------
+  const bestHandsBySeat = new Map(
+    winners
+      .filter((w) => Array.isArray(w.bestHand))
+      .map((w) => [Number(w.seat), new Set(w.bestHand)])
+  );
+
+  // Main winner info
+  const primaryWinner =
+    winners.find((w) => w.handDescription || w.reason) ||
+    winners[0] ||
+    null;
+
+  const winningSeat = primaryWinner ? Number(primaryWinner.seat) : null;
+  const winningBestSet =
+    winningSeat !== null ? bestHandsBySeat.get(winningSeat) || new Set() : new Set();
+
+  const winningHandText =
+    primaryWinner?.handDescription || primaryWinner?.reason || null;
+
+  // Sorted seat list (for result panel)
+  const playerSeats = Object.keys(players)
+    .map((s) => Number(s))
+    .sort((a, b) => a - b);
+
   const getPlayerDelta = (seat) => {
-    const player = players[seat];
-    if (!player) return 0;
-    
-    // Check if this player is a winner
-    const winner = winners?.find((w) => w.seat === seat);
-    if (winner) {
-      // Winner: show amount won
-      return winner.amount;
-    }
-    
-    // Loser: show negative of their bet (amount they invested and lost)
-    return -(player.bet || 0);
+    const winner = winners.find((w) => Number(w.seat) === seat);
+    if (winner) return winner.amount;
+    return -(players[seat]?.bet || 0);
   };
 
-  // Get all player seats
-  const playerSeats = Object.keys(players || {}).map(Number).sort((a, b) => a - b);
+  const getPlayerName = (player, seat, isMe) => {
+    if (isMe) return "You";
+    return player?.username || player?.name || `Seat ${seat}`;
+  };
 
+  // ---------------------------------------------------------
+  // RENDER
+  // ---------------------------------------------------------
   return (
     <div className="hand-result-overlay">
       <div className="hand-result-content">
+
+        {/* HEADER */}
         <div className="hand-result-header">
           <h2>
             {reason === "fold" ? "Hand Ended - Fold" : "Hand Ended - Showdown"}
           </h2>
-          <div className="hand-result-pot">Pot: ${pot?.toLocaleString() || 0}</div>
+          <div className="hand-result-pot">Pot: ${pot.toLocaleString()}</div>
         </div>
 
-        {/* Board Cards */}
-        {board && board.length > 0 && (
+        {/* Winning hand description text */}
+        {winningHandText && (
+          <div className="hand-result-winning-hand-main">
+            Winning Hand: {winningHandText}
+          </div>
+        )}
+
+        {/* ==================================================== */}
+        {/*  ROW 1 — WINNER HOLE CARDS (always show both)        */}
+        {/* ==================================================== */}
+        {primaryWinner && (
+          <div className="hand-result-winning-cards">
+            <div className="hand-result-label">Winning Hand:</div>
+
+            <div className="hand-result-cards">
+              {(() => {
+                const wp = players[winningSeat];
+                if (!wp || !wp.cards) return null;
+
+                return wp.cards.map((cardStr, idx) => {
+                  const card = parseCard(cardStr);
+                  if (!card) return null;
+
+                  const highlight = winningBestSet.has(cardStr);
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`hand-result-card ${
+                        highlight ? "best-hand-card" : ""
+                      }`}
+                    >
+                      <Card suit={card.suit} rank={card.rank} revealed={true} />
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* ==================================================== */}
+        {/*  ROW 2 — FULL BOARD (5 CARDS)                        */}
+        {/* ==================================================== */}
+        {board.length === 5 && (
           <div className="hand-result-board">
             <div className="hand-result-label">Board:</div>
+
             <div className="hand-result-cards">
               {board.map((cardStr, idx) => {
                 const card = parseCard(cardStr);
                 if (!card) return null;
+
+                const highlight = winningBestSet.has(cardStr);
+
                 return (
-                  <div key={idx} className="hand-result-card">
+                  <div
+                    key={idx}
+                    className={`hand-result-card ${
+                      highlight ? "best-hand-card" : ""
+                    }`}
+                  >
                     <Card suit={card.suit} rank={card.rank} revealed={true} />
                   </div>
                 );
@@ -61,44 +154,59 @@ export default function HandResultOverlay({ summary, currentUserSeat }) {
           </div>
         )}
 
-        {/* Player Results */}
+        {/* ==================================================== */}
+        {/*           PLAYER RESULT BOXES                        */}
+        {/* ==================================================== */}
         <div className="hand-result-players">
           {playerSeats.map((seat) => {
-            const player = players[seat];
-            if (!player) return null;
+            const p = players[seat];
+            if (!p) return null;
 
-            const isWinner = winnerSeats.has(seat);
-            const isCurrentUser = seat === currentUserSeat;
+            const isMe = seat === currentUserSeat;
             const delta = getPlayerDelta(seat);
-            const isPositive = delta > 0;
+            const positive = delta > 0;
+
+            const seatBest = bestHandsBySeat.get(seat) || new Set();
+            const isWinner = winners.some((w) => Number(w.seat) === seat);
 
             return (
               <div
                 key={seat}
                 className={`hand-result-player ${isWinner ? "winner" : ""} ${
-                  isCurrentUser ? "current-user" : ""
+                  isMe ? "current-user" : ""
                 }`}
               >
                 <div className="hand-result-player-header">
                   <div className="hand-result-player-name">
-                    {isCurrentUser ? "You" : `Seat ${seat}`}
+                    {getPlayerName(p, seat, isMe)}
                     {isWinner && <span className="winner-badge">WINNER</span>}
                   </div>
+
                   <div
-                    className={`hand-result-delta ${isPositive ? "positive" : "negative"}`}
+                    className={`hand-result-delta ${
+                      positive ? "positive" : "negative"
+                    }`}
                   >
-                    {isPositive ? "+" : ""}${delta.toLocaleString()}
+                    {positive ? "+" : ""}${delta.toLocaleString()}
                   </div>
                 </div>
 
-                {/* Player Cards */}
-                {player.cards && player.cards.length > 0 && (
+                {/* Player Hole Cards */}
+                {p.cards && (
                   <div className="hand-result-player-cards">
-                    {player.cards.map((cardStr, idx) => {
+                    {p.cards.map((cardStr, idx) => {
                       const card = parseCard(cardStr);
                       if (!card) return null;
+
+                      const used = seatBest.has(cardStr);
+
                       return (
-                        <div key={idx} className="hand-result-card">
+                        <div
+                          key={idx}
+                          className={`hand-result-card ${
+                            used ? "best-hand-card" : ""
+                          }`}
+                        >
                           <Card suit={card.suit} rank={card.rank} revealed={true} />
                         </div>
                       );
@@ -106,40 +214,52 @@ export default function HandResultOverlay({ summary, currentUserSeat }) {
                   </div>
                 )}
 
-                {/* Hand Description */}
-                {player.handDescription && (
+                {p.handDescription && (
                   <div className="hand-result-hand-description">
-                    {player.handDescription}
+                    {p.handDescription}
                   </div>
                 )}
 
-                {/* Fold Status */}
-                {player.folded && (
+                {p.folded && (
                   <div className="hand-result-folded">FOLDED</div>
                 )}
 
-                {/* Final Stack */}
                 <div className="hand-result-stack">
-                  Final Stack: ${player.stack?.toLocaleString() || 0}
+                  Final Stack: ${p.stack?.toLocaleString() || 0}
                 </div>
               </div>
             );
           })}
         </div>
 
-        {/* Winner Summary */}
-        {winners && winners.length > 0 && (
+        {/* ==================================================== */}
+        {/* WINNER SUMMARY SECTION                               */}
+        {/* ==================================================== */}
+        {winners.length > 0 && (
           <div className="hand-result-winners">
-            {winners.map((winner, idx) => (
-              <div key={idx} className="hand-result-winner-summary">
-                Seat {winner.seat} wins ${winner.amount.toLocaleString()}
-                {winner.reason && ` with ${winner.reason}`}
-              </div>
-            ))}
+            {winners.map((w, idx) => {
+              const seat = Number(w.seat);
+              const p = players[seat];
+              const name = p?.username || p?.name || `Seat ${seat}`;
+
+              return (
+                <div key={idx} className="hand-result-winner-summary">
+                  {name} wins ${w.amount.toLocaleString()}
+                  {w.reason && ` with ${w.reason}`}
+                </div>
+              );
+            })}
           </div>
         )}
+
+        {/* ==================================================== */}
+        {/* DISMISS BUTTON                                      */}
+        {/* ==================================================== */}
+        <button className="hand-result-dismiss-btn" onClick={onDismiss}>
+          Continue
+        </button>
+
       </div>
     </div>
   );
 }
-

@@ -202,7 +202,7 @@ final class GameService
     private function runShowdownSettlement(): array
     {
         $input = [];
-
+    
         foreach ($this->state->players as $seat => $p) {
             $input[] = [
                 'seat'        => $seat,
@@ -212,11 +212,11 @@ final class GameService
                 'contribution'=> $p->contribution,
             ];
         }
-
+    
         $eval = new HandEvaluator();
         $calc = new WinnerCalculator($eval);
         $wc   = $calc->calculate($input, $this->state->board);
-
+    
         // Apply payouts
         foreach ($this->state->players as $seat => $p) {
             $delta = $wc['payouts'][$seat] ?? 0;
@@ -224,9 +224,10 @@ final class GameService
                 $p->stack += $delta;
             }
         }
-
+    
         $this->state->resetPot();
-
+    
+        // Build winner info (winners[])
         $winners = [];
         foreach ($wc['handRanks'] as $info) {
             $seat = $info['seat'];
@@ -240,13 +241,30 @@ final class GameService
                 ];
             }
         }
-
+    
+        // ⭐ ADD THIS: include *full* player data including hole cards
+        $playersForSummary = [];
+        foreach ($this->state->players as $seat => $p) {
+            $playersForSummary[$seat] = [
+                'seat'            => $seat,
+                'user_id'         => $p->user_id,
+                'username'        => $p->username ?? null,
+                'name'            => $p->name ?? null,
+                'cards'           => $p->cards,     // <-- CRITICAL LINE
+                'folded'          => $p->folded,
+                'stack'           => $p->stack,
+                'bet'             => $p->bet ?? 0,
+                'handDescription' => null,
+            ];
+        }
+    
         return [
             'event'   => 'hand_end',
             'reason'  => 'showdown',
             'pot'     => $wc['totalPot'],
             'board'   => $this->state->board,
             'winners' => $winners,
+            'players' => $playersForSummary,   // <-- CRITICAL FIX
         ];
-    }
+    }    
 }

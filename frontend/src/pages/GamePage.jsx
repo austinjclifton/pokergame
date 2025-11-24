@@ -1,24 +1,47 @@
 // frontend/src/pages/GamePage.jsx
+// -----------------------------------------------------------------------------
+// GamePage
+// The main container for the entire poker table UI.
+// Handles socket connection, unread chat tracking, phase display,
+// hole cards, action bar, chat panel, and delegates layout components.
+//
+// NOTE: Pure frontend refactor — no backend contract changes.
+// -----------------------------------------------------------------------------
+
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+
 import useGameSocket from "../hooks/useGameSocket";
+
+// Top-level components
+import GameHeader from "../components/game/GameHeader";
 import GameTable from "../components/game/GameTable";
 import ActionBar from "../components/game/ActionBar";
 import GameChatBox from "../components/game/GameChatBox";
+
+// Cards
 import Card from "../components/cards/Card";
 import CardBack from "../components/cards/CardBack";
 import { parseCard } from "../utils/cardParser";
+
 import "../styles/game.css";
 
 export default function GamePage({ user }) {
   const { tableId } = useParams();
   const navigate = useNavigate();
+
+  // ---------------------------------------------------------
+  // UI State
+  // ---------------------------------------------------------
   const [error, setError] = useState(null);
   const [revealCards, setRevealCards] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const lastMessageCountRef = useRef(0);
 
+  // ---------------------------------------------------------
+  // WebSocket + Game State
+  // ---------------------------------------------------------
   const {
     gameState,
     sendAction,
@@ -27,52 +50,59 @@ export default function GamePage({ user }) {
     disconnect,
     connected,
     reconnecting,
-  } = useGameSocket(tableId, (err) => {
-    setError(err);
-  });
+  } = useGameSocket(tableId, (err) => setError(err));
 
   const messagesEndRef = useRef(null);
 
-  // Track unread chat messages
+  // ---------------------------------------------------------
+  // Unread Chat Tracking
+  // ---------------------------------------------------------
   useEffect(() => {
-    const currentMessageCount = (gameState.chatMessages || []).length;
-    if (!showChat && currentMessageCount > lastMessageCountRef.current) {
-      // New messages arrived while chat is closed
-      setUnreadChatCount(prev => prev + (currentMessageCount - lastMessageCountRef.current));
+    const messageCount = (gameState.chatMessages || []).length;
+
+    if (!showChat && messageCount > lastMessageCountRef.current) {
+      setUnreadChatCount(
+        (unread) => unread + (messageCount - lastMessageCountRef.current)
+      );
     }
-    lastMessageCountRef.current = currentMessageCount;
+
+    lastMessageCountRef.current = messageCount;
   }, [gameState.chatMessages, showChat]);
 
-  // Clear unread count when chat is opened
+  // Reset unread count when opening chat
   useEffect(() => {
-    if (showChat) {
-      setUnreadChatCount(0);
-    }
+    if (showChat) setUnreadChatCount(0);
   }, [showChat]);
 
-  // Redirect if no table ID
+  // ---------------------------------------------------------
+  // Navigation Guard (missing tableId)
+  // ---------------------------------------------------------
   useEffect(() => {
     if (!tableId) navigate("/lobby");
   }, [tableId, navigate]);
 
-  // Prevent closing socket on every refresh
+  // ---------------------------------------------------------
+  // Prevent socket teardown on refresh
+  // ---------------------------------------------------------
   useEffect(() => {
     const handleBeforeUnload = () => {
-      // Let the hook handle reconnects automatically
-      // Do NOT call disconnect() here — the backend will debounce reconnect
+      // Let hook handle recovery — do NOT disconnect explicitly.
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-    };
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, []);
 
-  // Only disconnect when user actually leaves table
+  // ---------------------------------------------------------
+  // Leave Table Handler
+  // ---------------------------------------------------------
   const handleLeaveTable = () => {
     disconnect();
     navigate("/lobby");
   };
 
+  // ---------------------------------------------------------
+  // Action Handler Wrapper
+  // ---------------------------------------------------------
   const handleAction = (action, amount = 0) => {
     if (!connected) {
       setError("Not connected to game server");
@@ -82,66 +112,66 @@ export default function GamePage({ user }) {
     sendAction(action, amount);
   };
 
-  const mySeat = gameState.seats.find((s) => s.seat_no === gameState.mySeat);
+  // ---------------------------------------------------------
+  // My Seat + Turn Info
+  // ---------------------------------------------------------
+  const mySeat =
+    Array.isArray(gameState.seats) &&
+    gameState.seats.find((s) => s.seat_no === gameState.mySeat);
+
   const isMyTurn = gameState.mySeat === gameState.actionSeat;
 
+  // ---------------------------------------------------------
+  // Early Exit (invalid table)
+  // ---------------------------------------------------------
   if (!tableId) {
     return (
       <div className="game-page">
         <div className="game-error">Invalid table ID</div>
       </div>
     );
-  }
+    }
 
+  // ============================================================================
+  // MAIN RENDER
+  // ============================================================================
   return (
     <div className="game-page">
-      {/* ===== HEADER ===== */}
-      <div className="game-header">
-        <div>
-          <h1>Poker Table #{tableId}</h1>
-          {Array.isArray(gameState.seats) && gameState.seats.length > 0 && (
-            <div className="game-players">
-              {gameState.seats.map((seat, idx) => {
-                const isMe = user && seat.user_id === user.id;
-                const label = seat.username || seat.name || `Seat ${seat.seat_no}`;
-                return (
-                  <span key={`${seat.user_id || "empty"}-${seat.seat_no}`}>
-                    {isMe ? "You" : label}: {label}
-                    {idx < gameState.seats.length - 1 && " | "}
-                  </span>
-                );
-              })}
-            </div>
-          )}
-        </div>
+      {/* -----------------------------------------------------
+         HEADER (cleanly extracted to its own component)
+      ------------------------------------------------------ */}
+      <GameHeader
+        tableId={tableId}
+        seats={gameState.seats}
+        currentUser={user}
+        connected={connected}
+        reconnecting={reconnecting}
+        onLeave={handleLeaveTable}
+      />
 
-        <div className="game-status">
-          {reconnecting && <span className="status-reconnecting">Reconnecting...</span>}
-          {!connected && !reconnecting && (
-            <span className="status-disconnected">Disconnected</span>
-          )}
-          {connected && <span className="status-connected">Connected</span>}
-        </div>
-
-        <button className="leave-button" onClick={handleLeaveTable}>
-          Leave Table
-        </button>
-      </div>
-
-      {/* ===== ERROR DISPLAY ===== */}
+      {/* -----------------------------------------------------
+         Global Error Display
+      ------------------------------------------------------ */}
       {error && <div className="game-error">Error: {error}</div>}
 
-      {/* ===== LOADING / DISCONNECTED ===== */}
+      {/* -----------------------------------------------------
+         Connection Lost Screen (before initial connect)
+      ------------------------------------------------------ */}
       {!connected && !reconnecting && (
         <div className="game-loading">
           <p>Connecting to game server...</p>
-          <button onClick={() => window.location.reload()}>Retry Connection</button>
+          <button onClick={() => window.location.reload()}>
+            Retry Connection
+          </button>
         </div>
       )}
 
-      {/* ===== MAIN GAME AREA ===== */}
+      {/* -----------------------------------------------------
+         MAIN GAME AREA (only renders when connected)
+      ------------------------------------------------------ */}
       {connected && (
         <>
+          {/* -------------------- Phase Banner -------------------- */}
           <div className="game-phase">
             Phase: {gameState.phase || "Waiting"}
             {gameState.currentBet > 0 && (
@@ -151,6 +181,7 @@ export default function GamePage({ user }) {
             )}
           </div>
 
+          {/* -------------------- Table -------------------- */}
           <GameTable
             state={{
               ...gameState,
@@ -161,20 +192,26 @@ export default function GamePage({ user }) {
             currentUser={user}
           />
 
-          {/* ===== PLAYER'S HOLE CARDS ===== */}
+          {/* -------------------- My Hole Cards -------------------- */}
           {mySeat &&
             Array.isArray(gameState.holeCards) &&
             gameState.holeCards.length > 0 && (
               <div className="my-hole-cards">
                 <div className="hole-cards-label">Your Cards:</div>
+
                 <div className="hole-cards-container">
                   {gameState.holeCards.map((cardStr, idx) => {
                     const card = parseCard(cardStr);
                     if (!card) return null;
+
                     return (
                       <div key={idx} className="hole-card">
                         {revealCards ? (
-                          <Card suit={card.suit} rank={card.rank} revealed={true} />
+                          <Card
+                            suit={card.suit}
+                            rank={card.rank}
+                            revealed={true}
+                          />
                         ) : (
                           <div className="card-back-wrapper">
                             <CardBack />
@@ -184,32 +221,33 @@ export default function GamePage({ user }) {
                     );
                   })}
                 </div>
+
                 <button
                   className="flip-cards-btn"
-                  onClick={() => setRevealCards(prev => !prev)}
+                  onClick={() => setRevealCards((prev) => !prev)}
                 >
                   {revealCards ? "Hide Cards" : "Show Cards"}
                 </button>
               </div>
             )}
 
-          {/* ===== ACTION BAR ===== */}
+          {/* -------------------- Action Bar -------------------- */}
           {mySeat && gameState.actionSeat && (
-              <ActionBar
-                legalActions={isMyTurn ? gameState.legalActions : []}
-                currentBet={gameState.currentBet}
-                myBet={mySeat.bet}
-                myStack={mySeat.stack}
-                onAction={handleAction}
-                disabled={!connected || !isMyTurn || gameState.showSummary}
-                showChat={showChat}
-                onToggleChat={() => setShowChat(prev => !prev)}
-                isMyTurn={isMyTurn}
-                unreadChatCount={unreadChatCount}
-              />
+            <ActionBar
+              legalActions={isMyTurn ? gameState.legalActions : []}
+              currentBet={gameState.currentBet}
+              myBet={mySeat.bet}
+              myStack={mySeat.stack}
+              onAction={handleAction}
+              disabled={!connected || !isMyTurn || gameState.showSummary}
+              showChat={showChat}
+              onToggleChat={() => setShowChat((prev) => !prev)}
+              isMyTurn={isMyTurn}
+              unreadChatCount={unreadChatCount}
+            />
           )}
 
-          {/* ===== CHAT BOX ===== */}
+          {/* -------------------- Chat Panel -------------------- */}
           {showChat && (
             <GameChatBox
               messages={gameState.chatMessages || []}

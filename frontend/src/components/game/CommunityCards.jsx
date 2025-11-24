@@ -1,4 +1,9 @@
 // frontend/src/components/game/CommunityCards.jsx
+// -----------------------------------------------------------------------------
+// CommunityCards
+// Renders the flop/turn/river cards in a simple horizontal layout.
+// -----------------------------------------------------------------------------
+
 import React from "react";
 import Card from "../cards/Card";
 import CardBack from "../cards/CardBack";
@@ -34,4 +39,3 @@ export default function CommunityCards({ cards = [] }) {
     </div>
   );
 }
-

@@ -128,7 +128,6 @@ final class GamePersistenceIntegrationTest extends BaseDBIntegrationTest
         require_once __DIR__ . '/../../../app/db/tables.php';
         require_once __DIR__ . '/../../../app/db/table_seats.php';
         require_once __DIR__ . '/../../../app/db/games.php';
-        require_once __DIR__ . '/../../../app/db/game_actions.php';
     }
 
     protected function setUp(): void
@@ -136,7 +135,6 @@ final class GamePersistenceIntegrationTest extends BaseDBIntegrationTest
         parent::setUp();
         
         // Clean up
-        $this->pdo->exec("DELETE FROM game_actions");
         $this->pdo->exec("DELETE FROM games");
         $this->pdo->exec("DELETE FROM table_seats");
         $this->pdo->exec("DELETE FROM tables");
@@ -213,11 +211,7 @@ final class GamePersistenceIntegrationTest extends BaseDBIntegrationTest
         ]);
         $this->gameSocket->onMessage($conn1, $actionMsg);
         
-        // Verify action was persisted
-        $actions = db_get_actions($this->pdo, $this->tableId);
-        // Note: This will fail if game wasn't created yet
-        // For now, we'll skip this assertion until hand starting is implemented
-        // $this->assertGreaterThan(0, count($actions), 'Action should be persisted');
+        // Note: Action persistence testing removed - backend no longer uses action replay tables
     }
 
     /**

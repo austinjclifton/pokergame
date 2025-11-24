@@ -31,8 +31,10 @@ function createInitialGameState() {
     // Chat
     chatMessages: [],
 
-    // Hand summary / overlay
+    // Hand summary (used by UI overlay)
     handSummary: null,
+
+    // Legacy flag – no longer drives UI visibility
     showSummary: false,
   };
 }
@@ -371,13 +373,17 @@ export default function useGameSocket(tableId, onError) {
     const handleHandEnd = (msg) => {
       const summary = msg.summary || msg.payload || msg;
 
+      // Store the summary for the overlay.
+      // Overlay visibility is now controlled entirely by the UI (GameTable),
+      // not by showSummary from the server.
       setGameState((prev) => ({
         ...prev,
         handSummary: summary,
-        showSummary: true,
+        // DO NOT set showSummary here; frontend controls overlay.
       }));
 
-      // After short delay, automatically request next hand
+      // After short delay, automatically request next hand.
+      // The table game state will progress behind the overlay.
       setTimeout(() => {
         const wsCurrent = socketRef.current;
         if (
@@ -394,16 +400,16 @@ export default function useGameSocket(tableId, onError) {
             );
           }
         }
-      }, 5000); // make it take 5 seconds before the window goes away
+      }, 5000);
     };
 
     const handleHandStart = (msg) => {
       const state = msg.state || {};
       const version = msg.version ?? null;
-
+    
       setGameState((prev) => {
         const newSeats = buildSeatsFromState(state, prev.seats);
-
+    
         return {
           ...prev,
           gameVersion: version ?? prev.gameVersion,
@@ -415,12 +421,13 @@ export default function useGameSocket(tableId, onError) {
           actionSeat: state.actionSeat ?? null,
           currentTurn: state.actionSeat ?? null,
           phase: (state.phase || "preflop").toString().toUpperCase(),
-          showSummary: false,
-          handSummary: null,
-          // Private state will be updated when STATE_PRIVATE arrives
+    
+          // ❗ KEEP SUMMARY VISIBLE UNTIL USER DISMISSES
+          // handSummary: prev.handSummary,
+          // showSummary: prev.showSummary,
         };
       });
-    };
+    };    
 
     const handlePlayerConnected = (msg) => {
       const seatNo = msg.seat_no;
@@ -455,7 +462,7 @@ export default function useGameSocket(tableId, onError) {
       if (stateRef.current.isConnecting || !stateRef.current.isMounted) {
         return;
       }
-      if (now - lastConnectRef.current < 2000) {
+      if (now - lastConnectRef.current < 1000) {
         return;
       }
 

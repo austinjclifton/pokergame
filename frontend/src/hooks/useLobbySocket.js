@@ -19,7 +19,7 @@ export default function useLobbySocket({ onMessage, onPlayers, onConnected }) {
     const init = async () => {
       const now = Date.now();
       if (stateRef.current.isConnecting || !stateRef.current.isMounted) return;
-      if (now - lastConnectRef.current < 2000) return;
+      if (now - lastConnectRef.current < 1000) return;
       lastConnectRef.current = now;
       stateRef.current.isConnecting = true;
 

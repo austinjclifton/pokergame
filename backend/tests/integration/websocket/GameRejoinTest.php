@@ -128,7 +128,6 @@ final class GameRejoinTest extends BaseDBIntegrationTest
         require_once __DIR__ . '/../../../app/db/tables.php';
         require_once __DIR__ . '/../../../app/db/table_seats.php';
         require_once __DIR__ . '/../../../app/db/games.php';
-        require_once __DIR__ . '/../../../app/db/game_actions.php';
         require_once __DIR__ . '/../../../app/db/sessions.php';
     }
 
@@ -137,7 +136,6 @@ final class GameRejoinTest extends BaseDBIntegrationTest
         parent::setUp();
         
         // Clean up
-        $this->pdo->exec("DELETE FROM game_actions");
         $this->pdo->exec("DELETE FROM games");
         $this->pdo->exec("DELETE FROM table_seats");
         $this->pdo->exec("DELETE FROM tables");
@@ -221,22 +219,6 @@ final class GameRejoinTest extends BaseDBIntegrationTest
         // 6. Verify state matches previous state (pot, version, etc.)
     }
 
-    /**
-     * Test that replay from game_actions reproduces same version and pot totals
-     */
-    public function testReplayReproducesState(): void
-    {
-        // This test requires a game to be started and actions to be taken
-        $this->markTestIncomplete('Requires hand starting logic to be implemented');
-        
-        // TODO: Once hand starting is implemented:
-        // 1. Start a hand
-        // 2. Take several actions, record final pot and version
-        // 3. Create new GameService instance
-        // 4. Replay all actions using rebuildFromActions
-        // 5. Verify final pot matches
-        // 6. Verify final version matches
-    }
 
     /**
      * Helper to get message by type

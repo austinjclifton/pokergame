@@ -1,0 +1,61 @@
+/* ========== MY HOLE CARDS ========== */
+
+.my-hole-cards {
+  position: relative;
+  margin: 2rem auto;
+  max-width: 600px;
+  background: rgba(17, 17, 17, 0.95);
+  backdrop-filter: blur(10px);
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(0, 188, 212, 0.3);
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.hole-cards-label {
+  font-size: 0.75rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+
+.hole-cards-container {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.hole-card {
+  transform: scale(0.7);
+  transform-origin: center;
+}
+
+.flip-cards-btn {
+  margin-top: 0.5rem;
+  padding: 8px 16px;
+  font-size: 0.875rem;
+  border-radius: 6px;
+  background: #333;
+  color: #fff;
+  border: 1px solid rgba(0, 188, 212, 0.3);
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.flip-cards-btn:hover {
+  background: #00bcd4;
+  color: #111;
+  border-color: #00bcd4;
+}
+
+.card-back-wrapper {
+  display: inline-block;
+}
+

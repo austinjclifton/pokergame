@@ -1,0 +1,214 @@
+/* ========== SEATS ========== */
+
+/* FULLY INLINE, ULTRA-THIN SEAT LAYOUT */
+.seat {
+  width: 100%;
+  max-width: 450px;
+  height: 56px;
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.seat.active {
+  border-color: #00bcd4;
+  box-shadow: 0 0 8px rgba(0, 188, 212, 0.3);
+}
+
+.seat.folded {
+  opacity: 0.4;
+}
+
+.seat.current-turn {
+  border-color: #00bcd4;
+  box-shadow: 0 0 12px rgba(255, 215, 0, 0.9);
+  transform: scale(1.03);
+  transition: all 0.25s ease;
+  background: rgba(0, 188, 212, 0.1);
+}
+
+/* Horizontal layout container */
+.seat-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 0.5rem;
+}
+
+/* Inline name + stack/bet block */
+.seat-info {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.seat-subrow {
+  display: flex;
+  flex-direction: row;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.seat-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #f5f5f5;
+  white-space: nowrap;
+}
+
+.seat-stack {
+  font-size: 0.875rem;
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.seat-bet {
+  font-size: 0.875rem;
+  color: #00bcd4;
+  font-weight: 500;
+  white-space: nowrap;
+  animation: betFlash 0.4s ease;
+}
+
+@keyframes betFlash {
+  0% { transform: scale(1.0); }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1.0); }
+}
+
+/* Compact status flags */
+.seat-allin {
+  font-size: 0.85rem;
+  color: #ffa726;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.seat-folded {
+  font-size: 0.85rem;
+  color: #666;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.seat-disconnected {
+  font-size: 0.85rem;
+  color: #ef5350;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+/* Inline cards on right side */
+.seat-cards-row {
+  display: flex;
+  gap: 0.15rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.seat-card-small {
+  transform: scale(0.42);
+  transform-origin: right center;
+}
+
+/* Override old vertical layout classes */
+.seat-cards {
+  display: flex;
+  flex-direction: row;
+  gap: 0.15rem;
+  margin: 0;
+  height: auto;
+  align-items: center;
+}
+
+.seat-card {
+  transform: scale(0.42);
+  transform-origin: right center;
+}
+
+.seat-content {
+  display: flex;
+  flex-direction: row;
+  gap: 0.5rem;
+  margin: 0;
+  min-height: auto;
+  align-items: center;
+  width: 100%;
+}
+
+/* Minimize hand description vertical spacing */
+.seat-hand-thin {
+  font-size: 0.6rem !important;
+  color: #aaa;
+  margin: 0 !important;
+  padding: 0 !important;
+  white-space: nowrap;
+}
+
+.seat-hand {
+  font-size: 0.6rem !important;
+  color: #aaa;
+  margin: 0 !important;
+  padding: 0 !important;
+  white-space: nowrap;
+}
+
+/* Smaller turn indicator */
+.turn-indicator {
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #00bcd4;
+  color: #111;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.flip-cards-btn-seat {
+  margin-top: 0.5rem;
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  background: #333;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.2s ease;
+  width: 100%;
+}
+
+.flip-cards-btn-seat:hover {
+  background: #00bcd4;
+  color: #111;
+}
+

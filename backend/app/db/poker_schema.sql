@@ -1,11 +1,15 @@
--- ================================
---  FULL MYSQL SCHEMA FOR POKER GAME
---  Compatible with local + RLES server
--- ================================
+-- ================================================
+--  CLEAN MINIMAL SCHEMA FOR THE 442 POKER PROJECT
+--  Only the tables actually used by the live code
+--  Snapshot-based architecture (single source of truth)
+-- ================================================
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
+-- ================================
+-- USERS + AUTH
+-- ================================
 CREATE TABLE users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   username VARCHAR(50) NOT NULL UNIQUE,
@@ -18,7 +22,7 @@ CREATE TABLE users (
 
 CREATE TABLE sessions (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT NULL COMMENT 'NULL for temporary sessions (e.g., unauthenticated users getting CSRF nonces)',
+  user_id INT NULL COMMENT 'NULL allows temporary sessions (e.g., for CSRF)',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   expires_at DATETIME NOT NULL,
   ip_hash CHAR(64) NOT NULL,
@@ -52,6 +56,9 @@ CREATE TABLE password_resets (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ================================
+-- LOBBY PRESENCE & CHALLENGES
+-- ================================
 CREATE TABLE user_lobby_presence (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL UNIQUE,
@@ -60,82 +67,6 @@ CREATE TABLE user_lobby_presence (
   last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX (last_seen_at),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Poker tables (physical tables where games are played)
-CREATE TABLE `tables` (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(100) NOT NULL,
-  max_seats TINYINT NOT NULL DEFAULT 6,
-  small_blind INT NOT NULL,
-  big_blind INT NOT NULL,
-  ante INT NOT NULL DEFAULT 0,
-  status ENUM('OPEN','IN_GAME','CLOSED') DEFAULT 'OPEN',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX (status),
-  INDEX (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Seats at poker tables
-CREATE TABLE table_seats (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  table_id INT NOT NULL,
-  seat_no TINYINT NOT NULL,
-  user_id INT NULL,
-  joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  left_at TIMESTAMP NULL,
-  UNIQUE KEY (table_id, seat_no),
-  FOREIGN KEY (table_id) REFERENCES `tables`(id) ON DELETE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
-  INDEX (table_id),
-  INDEX (user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Games (individual poker hands/sessions at a table)
-CREATE TABLE games (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  table_id INT NOT NULL,
-  dealer_seat TINYINT,
-  sb_seat TINYINT,
-  bb_seat TINYINT,
-  deck_seed INT,
-  version INT DEFAULT 0,
-  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  ended_at TIMESTAMP NULL,
-  status ENUM('ACTIVE','COMPLETE') DEFAULT 'ACTIVE',
-  FOREIGN KEY (table_id) REFERENCES `tables`(id) ON DELETE CASCADE,
-  INDEX (table_id),
-  INDEX (status),
-  INDEX (started_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Game actions (player actions during a game)
-CREATE TABLE game_actions (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  game_id INT NOT NULL,
-  seq INT NOT NULL,
-  actor_seat TINYINT,
-  action_type VARCHAR(20),
-  amount INT,
-  data_json JSON,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY (game_id, seq),
-  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
-  INDEX (game_id),
-  INDEX (game_id, seq)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Game state snapshots (for recovery and replay)
-CREATE TABLE game_snapshots (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  game_id INT NOT NULL,
-  version INT NOT NULL,
-  state_json JSON NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY (game_id, version),
-  INDEX (game_id),
-  INDEX (game_id, version),
-  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE game_challenges (
@@ -155,89 +86,75 @@ CREATE TABLE game_challenges (
   FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Note: The old 'actions' table (referencing game_hands) is kept for backward compatibility
--- but the new system uses 'game_actions' (referencing games directly)
 
-CREATE TABLE game_players (
-  game_id INT NOT NULL,
-  user_id INT NOT NULL,
-  seat TINYINT NOT NULL,
-  stack INT UNSIGNED NOT NULL,
-  joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  left_at DATETIME NULL,
-  role ENUM('sb','bb','button','none') NULL,
-  status ENUM('active','folded','all_in','left') NOT NULL DEFAULT 'active',
-  PRIMARY KEY (game_id, user_id),
-  UNIQUE KEY uq_seat (game_id, seat),
-  INDEX (user_id),
-  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
-  CHECK (seat IN (1,2))
+-- ================================
+-- TABLES + SEATS
+-- ================================
+CREATE TABLE `tables` (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  max_seats TINYINT NOT NULL DEFAULT 6,
+  small_blind INT NOT NULL,
+  big_blind INT NOT NULL,
+  ante INT NOT NULL DEFAULT 0,
+  status ENUM('OPEN','IN_GAME','CLOSED') DEFAULT 'OPEN',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (status),
+  INDEX (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE game_hands (
+CREATE TABLE table_seats (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  game_id INT NOT NULL,
-  hand_no INT NOT NULL,
-  street ENUM('preflop','flop','turn','river','showdown') NOT NULL DEFAULT 'preflop',
-  dealer_user_id INT NOT NULL,
-  active_player_id INT NOT NULL,
-  act_deadline_at DATETIME NULL,
-  board_cards VARCHAR(64) NULL,
-  deck_seed VARCHAR(64) NULL,
-  deck_hash CHAR(64) NULL,
-  winner_user_id INT NULL,
-  win_amount INT UNSIGNED NULL,
-  started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  ended_at DATETIME NULL,
-  UNIQUE KEY uq_game_hand (game_id, hand_no),
-  INDEX (game_id, hand_no),
-  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
-  FOREIGN KEY (dealer_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-  FOREIGN KEY (active_player_id) REFERENCES users(id) ON DELETE RESTRICT,
-  FOREIGN KEY (winner_user_id) REFERENCES users(id) ON DELETE SET NULL
+  table_id INT NOT NULL,
+  seat_no TINYINT NOT NULL,
+  user_id INT NULL,
+  joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  left_at TIMESTAMP NULL,
+  UNIQUE KEY (table_id, seat_no),
+  FOREIGN KEY (table_id) REFERENCES `tables`(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX (table_id),
+  INDEX (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE actions (
+-- ================================
+-- GAME (ONE HAND = ONE GAME)
+-- ================================
+CREATE TABLE games (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  hand_id INT NOT NULL,
-  game_id INT NOT NULL,
-  user_id INT NOT NULL,
-  hand_no INT NOT NULL,
-  seq_no INT NOT NULL,
-  street ENUM('preflop','flop','turn','river','showdown') NOT NULL,
-  action_type ENUM('post_sb','post_bb','post_ante','check','call','bet','raise','allin','fold','timeout_fold') NOT NULL,
-  amount INT UNSIGNED NOT NULL DEFAULT 0,
-  balance_before INT NOT NULL,
-  balance_after INT NOT NULL,
-  action_nonce CHAR(64) NOT NULL UNIQUE,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_hand_seq (hand_id, seq_no),
-  INDEX (game_id),
-  INDEX (user_id),
-  INDEX (game_id, hand_no),
-  FOREIGN KEY (hand_id) REFERENCES game_hands(id) ON DELETE CASCADE,
-  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+  table_id INT NOT NULL,
+  dealer_seat TINYINT,
+  sb_seat TINYINT,
+  bb_seat TINYINT,
+  deck_seed INT,
+  version INT DEFAULT 0,
+  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  ended_at TIMESTAMP NULL,
+  status ENUM('ACTIVE','COMPLETE') DEFAULT 'ACTIVE',
+  FOREIGN KEY (table_id) REFERENCES `tables`(id) ON DELETE CASCADE,
+  INDEX (table_id),
+  INDEX (status),
+  INDEX (started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE game_state_snapshots (
+-- ================================
+-- SNAPSHOTS (SINGLE SOURCE OF TRUTH)
+-- ================================
+CREATE TABLE game_snapshots (
   id INT AUTO_INCREMENT PRIMARY KEY,
   game_id INT NOT NULL,
-  hand_id INT NULL,
-  hand_no INT NULL,
-  street VARCHAR(20) NULL,
-  snapshot_type VARCHAR(50) NOT NULL,
-  snapshot_reason VARCHAR(100) NULL,
+  version INT NOT NULL,
   state_json JSON NOT NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY (game_id, version),
   INDEX (game_id),
-  INDEX (hand_id),
-  INDEX (game_id, hand_no),
-  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
-  FOREIGN KEY (hand_id) REFERENCES game_hands(id) ON DELETE SET NULL
+  INDEX (game_id, version),
+  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ================================
+-- CHAT + MESSAGING
+-- ================================
 CREATE TABLE chat_messages (
   id INT AUTO_INCREMENT PRIMARY KEY,
   channel_type ENUM('lobby','game') NOT NULL,
@@ -257,6 +174,9 @@ CREATE TABLE chat_messages (
   )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ================================
+-- WEBSOCKET SUBSCRIPTIONS
+-- ================================
 CREATE TABLE ws_subscriptions (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL,
@@ -274,27 +194,32 @@ CREATE TABLE ws_subscriptions (
   INDEX (last_ping_at),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
-  FOREIGN KEY (last_action_id_seen) REFERENCES actions(id) ON DELETE SET NULL,
   FOREIGN KEY (last_chat_id_seen) REFERENCES chat_messages(id) ON DELETE SET NULL,
-  CHECK ((channel_type='lobby' AND channel_id=0 AND game_id IS NULL) OR (channel_type='game' AND channel_id=game_id))
+  CHECK (
+    (channel_type='lobby' AND channel_id=0 AND game_id IS NULL)
+    OR (channel_type='game' AND channel_id=game_id)
+  )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ================================
+-- AUDIT LOGGING
+-- ================================
 CREATE TABLE audit_log (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   user_id INT NULL,
   session_id INT NULL,
-  ip_address VARCHAR(45) NULL COMMENT 'IPv4 or IPv6 address (hashed in ip_hash)',
-  ip_hash CHAR(64) NULL COMMENT 'SHA-256 hash of IP address for privacy',
+  ip_address VARCHAR(45) NULL,
+  ip_hash CHAR(64) NULL,
   user_agent VARCHAR(500) NULL,
-  action VARCHAR(100) NOT NULL COMMENT 'Action performed (e.g., user.login, challenge.create)',
-  entity_type VARCHAR(50) NULL COMMENT 'Type of entity affected (e.g., user, challenge, game)',
-  entity_id INT NULL COMMENT 'ID of the affected entity',
-  details JSON NULL COMMENT 'Additional structured data about the event',
-  channel ENUM('api','websocket') NOT NULL DEFAULT 'api' COMMENT 'Channel where action occurred',
-  status ENUM('success','failure','error') NOT NULL DEFAULT 'success' COMMENT 'Outcome of the action',
+  action VARCHAR(100) NOT NULL,
+  entity_type VARCHAR(50) NULL,
+  entity_id INT NULL,
+  details JSON NULL,
+  channel ENUM('api','websocket') NOT NULL DEFAULT 'api',
+  status ENUM('success','failure','error') NOT NULL DEFAULT 'success',
   severity ENUM('info','warn','error','critical') NOT NULL DEFAULT 'info',
-  previous_hash CHAR(64) NULL COMMENT 'Hash of previous audit log entry (for tamper detection)',
+  previous_hash CHAR(64) NULL,
   INDEX idx_user_id (user_id),
   INDEX idx_session_id (session_id),
   INDEX idx_timestamp (timestamp),
@@ -307,41 +232,6 @@ CREATE TABLE audit_log (
   INDEX idx_action_timestamp (action, timestamp),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-COMMENT='Audit trail for all significant actions. Append-only design for tamper resistance.';
-
-CREATE TABLE hand_players (
-  hand_id INT NOT NULL,
-  user_id INT NOT NULL,
-  seat TINYINT NOT NULL,
-  card_a CHAR(2) NULL,
-  card_b CHAR(2) NULL,
-  stack_start INT UNSIGNED NOT NULL,
-  stack_end INT UNSIGNED NULL,
-  received_at DATETIME NULL,
-  folded_at DATETIME NULL,
-  all_in_at DATETIME NULL,
-  exposed_at DATETIME NULL,
-  final_hand_rank SMALLINT NULL,
-  final_hand_desc VARCHAR(50) NULL,
-  PRIMARY KEY (hand_id, user_id),
-  UNIQUE KEY uq_seat (hand_id, seat),
-  INDEX (user_id),
-  FOREIGN KEY (hand_id) REFERENCES game_hands(id) ON DELETE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
-  CHECK (seat IN (1,2))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE user_game_results (
-  user_id INT NOT NULL,
-  game_id INT NOT NULL,
-  result ENUM('win','loss','draw','abandoned') NOT NULL,
-  chips_delta INT NOT NULL,
-  ended_at DATETIME NOT NULL,
-  PRIMARY KEY (user_id, game_id),
-  INDEX (game_id),
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
-  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 SET FOREIGN_KEY_CHECKS = 1;

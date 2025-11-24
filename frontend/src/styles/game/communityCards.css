@@ -1,0 +1,46 @@
+/* ========== COMMUNITY CARDS ========== */
+
+.community-cards {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  min-height: auto;
+}
+
+.community-placeholder {
+  color: #666;
+  font-style: italic;
+  font-size: 0.875rem;
+  width: 100%;
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.community-cards-container {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+}
+
+.community-card-wrapper {
+  animation: cardReveal 0.3s ease-out;
+}
+
+.community-card {
+  animation: cardReveal 0.3s ease-out;
+}
+
+@keyframes cardReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

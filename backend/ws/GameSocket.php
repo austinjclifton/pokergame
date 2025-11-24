@@ -24,7 +24,6 @@ require_once __DIR__ . '/../app/services/SubscriptionService.php';
 require_once __DIR__ . '/../app/services/AuditService.php';
 require_once __DIR__ . '/../app/services/PresenceService.php';
 
-require_once __DIR__ . '/../app/db/game_actions.php';
 require_once __DIR__ . '/../app/db/game_snapshots.php';
 require_once __DIR__ . '/../app/db/games.php';
 require_once __DIR__ . '/../app/db/users.php';
@@ -594,44 +593,39 @@ final class GameSocket implements MessageComponentInterface
      */
     private function rebuildFromDatabase(int $tableId, int $gameId, GameService $gameService): void
     {
-        // Double-check table is still empty before rebuilding (defense against race conditions)
+        // Abort if players appeared during rebuild
         $activeConnectionCount = count($this->tableConnections[$tableId] ?? []);
-        $activeUserCount = isset($this->userConnections[$tableId]) 
-            ? count($this->userConnections[$tableId]) 
+        $activeUserCount = isset($this->userConnections[$tableId])
+            ? count($this->userConnections[$tableId])
             : 0;
-        
+    
         if ($activeConnectionCount > 0 || $activeUserCount > 0) {
-            echo "[GameSocket] Aborting rebuild for table #{$tableId} (connections appeared during rebuild check)\n";
+            echo "[GameSocket] Aborting rebuild for table #{$tableId} (connections appeared)\n";
             return;
         }
-
+    
         $this->rebuildingTables[$tableId] = true;
-
+    
         try {
-            $snapshot = $this->persistenceService->loadLatestState($gameId);
-            $actions  = db_get_actions($this->pdo, $gameId);
-
+            // Snapshot-only restore
+            $snapshot = $this->persistenceService->loadLatest($gameId); // uses db_get_latest_snapshot
+    
             if ($snapshot && !empty($snapshot['state'])) {
-                $this->restoreFromSnapshot($gameService, $snapshot['state'], (int)$snapshot['version']);
-
-                if (!empty($actions)) {
-                    $postSnap = array_filter(
-                        $actions,
-                        fn($a) => (int)$a['seq'] > (int)$snapshot['version']
-                    );
-                    if (!empty($postSnap)) {
-                        $gameService->rebuildFromActions(array_values($postSnap));
-                    }
-                }
-            } elseif (!empty($actions)) {
-                $gameService->rebuildFromActions($actions);
+                $this->restoreFromSnapshot(
+                    $gameService,
+                    $snapshot['state'],
+                    (int)($snapshot['version'] ?? 0)
+                );
+                echo "[GameSocket] Snapshot restored for table #{$tableId}\n";
+            } else {
+                echo "[GameSocket] No snapshot found for game #{$gameId}; skipping rebuild.\n";
             }
         } catch (\Throwable $e) {
             error_log("[GameSocket] Rebuild failed: " . $e->getMessage());
         } finally {
             unset($this->rebuildingTables[$tableId]);
         }
-    }
+    }    
 
     private function restoreFromSnapshot(GameService $gameService, array $state, int $version): void
     {
@@ -1096,11 +1090,11 @@ final class GameSocket implements MessageComponentInterface
             return;
         }
     
-        // Example: default stacks 2000 (replace with your real source of chips if needed)
+        // Example: default stacks 1000
         $players = array_map(
             fn($r) => [
                 'seat'  => (int)$r['seat_no'],
-                'stack' => 2000,
+                'stack' => 1000,
             ],
             $active
         );

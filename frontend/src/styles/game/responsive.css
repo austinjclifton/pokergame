@@ -1,0 +1,117 @@
+/* ========== RESPONSIVE ========== */
+
+@media (max-width: 768px) {
+  .game-page {
+    padding: 0.5rem;
+  }
+
+  .game-header {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .game-header h1 {
+    font-size: 1rem;
+  }
+
+  .leave-button {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.75rem;
+  }
+
+  .game-header-players {
+    font-size: 0.75rem;
+  }
+
+  .game-table-container {
+    min-height: 300px;
+    gap: 1.5rem;
+  }
+
+  .seat {
+    transform: scale(0.9);
+    max-width: 400px;
+    height: 50px;
+  }
+
+  .seat-name,
+  .seat-stack,
+  .seat-bet {
+    font-size: 0.8rem;
+  }
+
+  .seat-card-small {
+    transform: scale(0.38);
+  }
+
+  .action-bar {
+    bottom: 0;
+    left: 0;
+    right: 0;
+  }
+
+  .action-controls {
+    padding: 0.75rem 1rem;
+  }
+
+  .action-controls-inputs {
+    gap: 0.75rem;
+  }
+
+  .action-number-input {
+    width: 80px;
+    padding: 0.4rem;
+    font-size: 0.8rem;
+  }
+
+  .action-amount-display {
+    min-width: 60px;
+    font-size: 0.9rem;
+  }
+
+  .action-buttons {
+    gap: 0.375rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .action-btn {
+    min-width: 70px;
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    height: 36px;
+  }
+
+  .my-hole-cards {
+    margin: 1.5rem auto;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .hand-result-content {
+    padding: 1.5rem;
+    width: 95%;
+  }
+
+  .hand-result-header h2 {
+    font-size: 1.25rem;
+  }
+
+  .hand-result-pot {
+    font-size: 1rem;
+  }
+
+  .hand-result-card {
+    transform: scale(0.8);
+  }
+
+  .hand-result-player-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .hand-result-delta {
+    font-size: 1rem;
+  }
+}
+

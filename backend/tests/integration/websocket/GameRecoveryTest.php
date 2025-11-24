@@ -164,7 +164,6 @@ final class GameRecoveryTest extends TestCase
         require_once __DIR__ . '/../../../app/services/GamePersistenceService.php';
         require_once __DIR__ . '/../../../app/services/game/cards/DealerService.php';
         require_once __DIR__ . '/../../../app/services/game/cards/HandEvaluator.php';
-        require_once __DIR__ . '/../../../app/db/game_actions.php';
         require_once __DIR__ . '/../../../app/db/game_snapshots.php';
         require_once __DIR__ . '/../../../app/db/games.php';
         require_once __DIR__ . '/../../../app/db/users.php';
@@ -209,40 +208,6 @@ final class GameRecoveryTest extends TestCase
         $request = new TestRecoveryRequest("game_id={$gameId}");
         $conn = new TestRecoveryConnection($resourceId, $userCtx, $request);
         return $conn;
-    }
-
-    /**
-     * Test that actions are persisted and can be replayed
-     */
-    public function testActionsArePersistedAndReplayable(): void
-    {
-        // Connect player 1
-        $conn1 = $this->createConnection(1, $this->userId1, $this->gameId);
-        $this->gameSocket->onOpen($conn1);
-
-        // Clear initial messages
-        $conn1->sentMessages = [];
-
-        // Player 1 checks
-        $actionMsg = json_encode([
-            'cmd' => 'action',
-            'action' => 'check',
-            'amount' => 0,
-            'game_version' => 0,
-        ]);
-        
-        $this->gameSocket->onMessage($conn1, $actionMsg);
-
-        // Verify action was persisted
-        $stmt = $this->pdo->prepare("
-            SELECT COUNT(*) as count
-            FROM actions
-            WHERE game_id = :game_id
-        ");
-        $stmt->execute(['game_id' => $this->gameId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        $this->assertGreaterThan(0, (int)$row['count'], 'Action should be persisted to database');
     }
 
     /**
