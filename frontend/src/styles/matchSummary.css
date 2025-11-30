@@ -1,0 +1,262 @@
+/* ============================================================================
+   MATCH SUMMARY PAGE
+   ============================================================================ */
+
+.match-summary-page {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.4s ease-out;
+  overflow-y: auto;
+  padding: 2rem;
+}
+
+.match-summary-container {
+  background: #1d1d1d;
+  border-radius: 16px;
+  padding: 2.5rem 3rem;
+  width: 90%;
+  max-width: 600px;
+  box-shadow: 0 0 25px rgba(0, 0, 0, 0.45);
+  color: white;
+  animation: slideUp 0.4s ease-out;
+}
+
+.match-summary-title {
+  font-size: 2.5rem;
+  margin-bottom: 2rem;
+  font-weight: 700;
+  text-align: center;
+  color: #fff;
+}
+
+/* ============================================================================
+   BLOCKS (Winner, Loser, Final Hand)
+   ============================================================================ */
+
+.match-summary-block {
+  background: #2b2b2b;
+  padding: 1.5rem;
+  border-radius: 12px;
+  margin-bottom: 1.5rem;
+}
+
+.match-summary-block h2 {
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.match-summary-block h3 {
+  font-size: 1.2rem;
+  margin-bottom: 0.75rem;
+  font-weight: 600;
+  color: #ccc;
+}
+
+.winner-block {
+  border-left: 4px solid #4a9cff;
+}
+
+.loser-block {
+  border-left: 4px solid #ff6b6b;
+}
+
+.final-hand-block {
+  border-left: 4px solid #51cf66;
+}
+
+/* ============================================================================
+   PLAYER INFO
+   ============================================================================ */
+
+.player-name {
+  font-size: 1.3rem;
+  margin: 0.5rem 0;
+  font-weight: 600;
+  color: #fff;
+}
+
+.player-stack {
+  font-size: 1.1rem;
+  margin: 0.5rem 0;
+  opacity: 0.9;
+  color: #ccc;
+}
+
+/* ============================================================================
+   HAND DESCRIPTION
+   ============================================================================ */
+
+.hand-description {
+  font-size: 1.2rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #1a1a1a;
+  border-radius: 8px;
+  color: #51cf66;
+  font-weight: 600;
+}
+
+.hand-description strong {
+  color: #fff;
+  margin-right: 0.5rem;
+}
+
+.hand-desc {
+  font-size: 1.2rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #1a1a1a;
+  border-radius: 8px;
+  color: #51cf66;
+  font-weight: 600;
+  text-align: center;
+}
+
+.pot {
+  font-size: 1.3rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #1a1a1a;
+  border-radius: 8px;
+  text-align: center;
+  color: #ffd43b;
+  font-weight: 600;
+}
+
+/* ============================================================================
+   CARD SECTIONS
+   ============================================================================ */
+
+.card-section {
+  margin-bottom: 1.5rem;
+}
+
+.card-section h3 {
+  margin-bottom: 1rem;
+  color: #ccc;
+}
+
+.card-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+/* Specific card row styles */
+.board-cards,
+.winning-hand {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ============================================================================
+   POT DISPLAY
+   ============================================================================ */
+
+.pot-display {
+  font-size: 1.3rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #1a1a1a;
+  border-radius: 8px;
+  text-align: center;
+  color: #ffd43b;
+  font-weight: 600;
+}
+
+.pot-display strong {
+  color: #fff;
+  margin-right: 0.5rem;
+}
+
+/* ============================================================================
+   RETURN BUTTON
+   ============================================================================ */
+
+.return-lobby-btn {
+  background: #4a9cff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.75rem 1.25rem;
+  color: white;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 1rem;
+  transition: background 0.2s ease-in-out, transform 0.15s ease;
+}
+
+.return-lobby-btn:hover {
+  background: #6ab1ff;
+}
+
+.return-lobby-btn:active {
+  transform: scale(0.97);
+}
+
+/* ============================================================================
+   ANIMATIONS
+   ============================================================================ */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(35px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0px);
+    opacity: 1;
+  }
+}
+
+/* ============================================================================
+   RESPONSIVE
+   ============================================================================ */
+
+@media (max-width: 768px) {
+  .match-summary-container {
+    padding: 1.5rem 2rem;
+    max-width: 95%;
+  }
+
+  .match-summary-title {
+    font-size: 2rem;
+  }
+
+  .match-summary-block {
+    padding: 1rem;
+  }
+
+  .card-row {
+    gap: 0.25rem;
+  }
+}
+

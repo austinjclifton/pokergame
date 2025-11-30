@@ -22,6 +22,9 @@ import GameChatBox from "../components/game/GameChatBox";
 // Cards
 import Card from "../components/cards/Card";
 import CardBack from "../components/cards/CardBack";
+import HandResultOverlay from "../components/game/HandResultOverlay";
+import MatchEndScreen from "../components/game/MatchEndScreen";
+
 import { parseCard } from "../utils/cardParser";
 
 import "../styles/game.css";
@@ -29,6 +32,24 @@ import "../styles/game.css";
 export default function GamePage({ user }) {
   const { tableId } = useParams();
   const navigate = useNavigate();
+
+  // ---------------------------------------------------------
+  // Check for match end in localStorage BEFORE loading socket
+  // ---------------------------------------------------------
+  useEffect(() => {
+    if (!tableId) return;
+    
+    try {
+      const cached = localStorage.getItem(`matchSummary_${tableId}`);
+      if (cached) {
+        // Match has ended, redirect to summary page
+        navigate(`/match/${tableId}/summary`, { replace: true });
+        return;
+      }
+    } catch (e) {
+      console.error("Failed to check localStorage:", e);
+    }
+  }, [tableId, navigate]);
 
   // ---------------------------------------------------------
   // UI State
@@ -50,7 +71,11 @@ export default function GamePage({ user }) {
     disconnect,
     connected,
     reconnecting,
-  } = useGameSocket(tableId, (err) => setError(err));
+  } = useGameSocket(
+    tableId,
+    (err) => setError(err),
+    (tid) => navigate(`/match/${tid}/summary`, { replace: true })
+  );
 
   const messagesEndRef = useRef(null);
 
@@ -131,6 +156,37 @@ export default function GamePage({ user }) {
       </div>
     );
     }
+
+  // =============================================================
+  // RENDER PRIORITY OVERRIDES (top-level gating for summaries)
+  // =============================================================
+  if (connected && gameState.showSummary && gameState.handSummary) {
+    return (
+      <HandResultOverlay
+        summary={gameState.handSummary}
+        currentUserSeat={gameState.mySeat}
+        onDismiss={() => {
+          // The hook likely exposes setShowSummary or similar; 
+          // if not I’ll patch that next.
+          if (gameState.clearSummary) {
+            gameState.clearSummary();
+          } else {
+            // Fallback: let GameTable's dismiss logic handle it
+            requestSync();
+          }
+        }}
+      />
+    );
+  }
+
+  if (connected && !gameState.showSummary && gameState.matchEnd) {
+    return (
+      <MatchEndScreen
+        winner={gameState.matchEnd.winner}
+        loser={gameState.matchEnd.loser}
+      />
+    );
+  }
 
   // ============================================================================
   // MAIN RENDER
@@ -238,6 +294,12 @@ export default function GamePage({ user }) {
               currentBet={gameState.currentBet}
               myBet={mySeat.bet}
               myStack={mySeat.stack}
+
+              // ========================================================
+              // REQUIRED FOR EFFECTIVE STACK — FIXES SLIDER MAX LOGIC
+              // ========================================================
+              allPlayers={gameState.seats}
+
               onAction={handleAction}
               disabled={!connected || !isMyTurn || gameState.showSummary}
               showChat={showChat}

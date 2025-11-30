@@ -168,3 +168,23 @@ function db_find_active_table_for_user(PDO $pdo, int $userId): ?int
     return $row ? (int)$row['table_id'] : null;
 }
 
+/**
+ * Clear all seats at a table (set left_at timestamp for all active seats).
+ * Used when match ends to return players to lobby.
+ * 
+ * @param PDO $pdo Database connection
+ * @param int $tableId Table ID
+ * @return bool True on success, false on failure
+ */
+function db_clear_table_seats(PDO $pdo, int $tableId): bool
+{
+    $stmt = $pdo->prepare("
+        UPDATE table_seats
+        SET left_at = NOW()
+        WHERE table_id = :table_id
+        AND left_at IS NULL
+    ");
+    
+    return $stmt->execute(['table_id' => $tableId]);
+}
+

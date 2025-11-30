@@ -45,22 +45,6 @@ declare(strict_types=1);
  */
 function db_create_game(PDO $pdo, int $tableId, int $dealerSeat, int $sbSeat, int $bbSeat, int $deckSeed): ?int
 {
-    // CRITICAL: Force immediate output - this MUST appear in terminal
-    fwrite(STDERR, "\n*** db_create_game() CALLED ***\n");
-    fflush(STDERR);
-    
-    // Force output immediately (no buffering)
-    if (ob_get_level() > 0) {
-        ob_flush();
-    }
-    
-    // Verify function signature
-    $ref = new ReflectionFunction(__FUNCTION__);
-    $paramCount = $ref->getNumberOfParameters();
-    fwrite(STDERR, "[db_create_game] FUNCTION CALLED - Signature has {$paramCount} parameters\n");
-    fwrite(STDERR, "[db_create_game] Received args: tableId={$tableId} (type: " . gettype($tableId) . "), dealerSeat={$dealerSeat}, sbSeat={$sbSeat}, bbSeat={$bbSeat}, deckSeed={$deckSeed}\n");
-    fflush(STDERR);
-    
     try {
         // Use positional parameters - include status as a parameter to avoid any issues
         $sql = "INSERT INTO games (table_id, dealer_seat, sb_seat, bb_seat, deck_seed, status) VALUES (?, ?, ?, ?, ?, ?)";
@@ -69,50 +53,28 @@ function db_create_game(PDO $pdo, int $tableId, int $dealerSeat, int $sbSeat, in
         $placeholderCount = substr_count($sql, '?');
         $paramCount = count($params);
         
-        // Log for debugging (to stderr so it appears in server terminal)
-        fwrite(STDERR, "[db_create_game] SQL: {$sql}\n");
-        fwrite(STDERR, "[db_create_game] Placeholders in SQL: {$placeholderCount}\n");
-        fwrite(STDERR, "[db_create_game] Parameters array count: {$paramCount}\n");
-        fwrite(STDERR, "[db_create_game] Params array: " . json_encode($params, JSON_PARTIAL_OUTPUT_ON_ERROR) . "\n");
-        fwrite(STDERR, "[db_create_game] Param types: " . implode(', ', array_map('gettype', $params)) . "\n");
-        
-        error_log("[db_create_game] SQL: {$sql}");
-        error_log("[db_create_game] Placeholders: {$placeholderCount}, Parameters: {$paramCount}");
-        error_log("[db_create_game] Params: " . json_encode($params));
-        
         if ($placeholderCount !== $paramCount) {
             $msg = "SQL parameter count mismatch: {$placeholderCount} placeholders but {$paramCount} parameters";
-            fwrite(STDERR, "[db_create_game] ERROR: {$msg}\n");
-            error_log("[db_create_game] Parameter mismatch: {$placeholderCount} placeholders but {$paramCount} parameters");
             throw new \RuntimeException($msg);
         }
         
-        fwrite(STDERR, "[db_create_game] Preparing statement...\n");
         $stmt = $pdo->prepare($sql);
         if ($stmt === false) {
             $error = $pdo->errorInfo();
             $msg = "Failed to prepare statement: " . ($error[2] ?? 'Unknown error');
-            fwrite(STDERR, "[db_create_game] ERROR: {$msg}\n");
             throw new \RuntimeException($msg);
         }
         
-        fwrite(STDERR, "[db_create_game] Executing with " . count($params) . " parameters...\n");
         $result = $stmt->execute($params);
         
         if (!$result) {
-            $errorInfo = $stmt->errorInfo();
-            error_log("[db_create_game] Execute returned false. Error: " . ($errorInfo[2] ?? 'Unknown error'));
             return null;
         }
         
         return (int)$pdo->lastInsertId();
     } catch (PDOException $e) {
-        error_log("[db_create_game] PDO Exception: " . $e->getMessage());
-        error_log("[db_create_game] SQL: {$sql}");
-        error_log("[db_create_game] Params: " . json_encode($params ?? []));
         throw $e;
     } catch (\Throwable $e) {
-        error_log("[db_create_game] Exception: " . $e->getMessage());
         throw $e;
     }
 }
@@ -188,5 +150,19 @@ function db_end_game(PDO $pdo, int $gameId): bool
         WHERE id = :game_id
     ");
     
+    return $stmt->execute(['game_id' => $gameId]);
+}
+
+/**
+ * Delete a game (hard delete).
+ * Used when match ends to clean up completely.
+ * 
+ * @param PDO $pdo Database connection
+ * @param int $gameId Game ID
+ * @return bool True on success, false on failure
+ */
+function db_delete_game(PDO $pdo, int $gameId): bool
+{
+    $stmt = $pdo->prepare("DELETE FROM games WHERE id = :game_id");
     return $stmt->execute(['game_id' => $gameId]);
 }

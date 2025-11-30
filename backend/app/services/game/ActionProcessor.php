@@ -8,20 +8,29 @@ require_once __DIR__ . '/rules/GameTypes.php';
 final class ActionProcessor
 {
     /**
+     * ========================================================
+     * ACTION PROCESSOR
+     * ========================================================
      * Executes a player's action and mutates GameState.
      *
      * IMPORTANT:
      *  - NEVER changes player->stack
      *  - NEVER changes player->contribution
      *  - NEVER changes player->totalInvested
-     *  - ONLY updates:
-     *        • state->pot (from chipsUsed)
-     *        • state->currentBet / lastRaiseAmount / lastRaiseSeat
-     *        • actionSeat rotation
-     *        • fold → immediate hand end
      *
-     * BettingEngine *is the only class* that mutates:
-     *    bet, stack, allIn, totalInvested, contribution
+     * BettingEngine is the ONLY class allowed to mutate:
+     *    • stack
+     *    • bet
+     *    • allIn
+     *    • totalInvested
+     *    • contribution
+     *
+     * This class ONLY:
+     *    • updates pot (adding chipsUsed)
+     *    • updates currentBet / lastRaiseAmount / lastRaiseSeat
+     *    • rotates action seat
+     *    • detects fold → hand ended
+     * ========================================================
      */
     public static function apply(
         GameState $state,
@@ -30,9 +39,9 @@ final class ActionProcessor
         int $amount = 0
     ): array {
 
-        // ---------------------------------------------------------
-        // Basic validation
-        // ---------------------------------------------------------
+        // ================================
+        // BASIC VALIDATION
+        // ================================
         if (!isset($state->players[$seat])) {
             return ['ok' => false, 'message' => 'Invalid seat'];
         }
@@ -51,9 +60,9 @@ final class ActionProcessor
             return ['ok' => false, 'message' => 'Not your turn'];
         }
 
-        // ---------------------------------------------------------
-        // Get legal actions
-        // ---------------------------------------------------------
+        // ================================
+        // LOAD LEGAL ACTIONS
+        // ================================
         $legal = BettingEngine::getLegalActions(
             $player,
             $state->currentBet,
@@ -65,46 +74,46 @@ final class ActionProcessor
             return ['ok' => false, 'message' => 'Illegal action'];
         }
 
-        // ---------------------------------------------------------
-        // Execute via BettingEngine
-        // (mutates: bet, stack, contribution, totalInvested, allIn)
-        // ---------------------------------------------------------
+        // ================================
+        // EXECUTE ACTION (stack/bet mutations)
+        // ================================
         $oldPot = $state->pot;
         $oldContrib = $player->contribution;
+
+        // ========================================================
+        // NEW: pass allPlayers to allow effective-stack enforcement
+        // ========================================================
         $result = BettingEngine::executeAction(
             $player,
             $action,
             $amount,
             $state->currentBet,
             $state->bigBlindAmount,
-            $state->lastRaiseAmount
+            $state->lastRaiseAmount,
+            $state->players  // <—— REQUIRED FOR EFFECTIVE STACK LOGIC
         );
 
         if (!($result['ok'] ?? false)) {
             return $result;
         }
 
-        // ---------------------------------------------------------
-        // Add chipsUsed to pot — THIS IS THE ONLY CHIP CHANGE HERE
-        // ---------------------------------------------------------
+        // ================================
+        // APPLY chipsUsed TO POT
+        // ================================
         if (isset($result['chipsUsed'])) {
             $chips = (int)$result['chipsUsed'];
-            // CHIP TRACE
-            error_log("[CHIP TRACE] BETTING: " . __FILE__ . ":" . __LINE__ . " action={$action->value} amount={$chips} oldContrib={$oldContrib} newContrib={$player->contribution} pot BEFORE={$oldPot}");
             $state->pot += $chips;
-            // CHIP TRACE
-            error_log("[CHIP TRACE] BETTING: " . __FILE__ . ":" . __LINE__ . " pot AFTER={$state->pot}");
         }
 
-        // ---------------------------------------------------------
-        // Update currentBet + raise metadata
-        // ---------------------------------------------------------
+        // ================================
+        // UPDATE CURRENT BET & RAISE METADATA
+        // ================================
         if (isset($result['newBet'])) {
             $newBet = $result['newBet'];
 
-            // Raise or bet increased the global current bet
             if ($newBet > $state->currentBet) {
 
+                // Was this a true BET or RAISE?
                 if ($action === ActionType::BET || $action === ActionType::RAISE) {
                     $state->lastRaiseAmount = $newBet - $state->currentBet;
                     $state->lastRaiseSeat   = $seat;
@@ -114,10 +123,11 @@ final class ActionProcessor
             }
         }
 
-        // ---------------------------------------------------------
-        // FOLD → instant win if only 1 survives
-        // ---------------------------------------------------------
+        // ================================
+        // FOLD → HAND MAY END IMMEDIATELY
+        // ================================
         if ($action === ActionType::FOLD) {
+
             $active = array_filter(
                 $state->players,
                 static fn(PlayerState $p) => !$p->folded
@@ -127,14 +137,14 @@ final class ActionProcessor
                 return [
                     'ok'        => true,
                     'handEnded' => true,
-                    'winner'    => null,
+                    'winner'    => null, // Winner determined in HandEnder
                 ];
             }
         }
 
-        // ---------------------------------------------------------
-        // Rotate action seat
-        // ---------------------------------------------------------
+        // ================================
+        // ROTATE ACTION SEAT
+        // ================================
         $state->actionSeat = self::nextActive($state, $seat);
 
         return [
@@ -145,7 +155,13 @@ final class ActionProcessor
     }
 
     /**
-     * Get next non-folded, non-all-in seat clockwise.
+     * ========================================================
+     * FIND NEXT ACTION SEAT
+     * ========================================================
+     * Finds next seat that is:
+     *    • not folded
+     *    • not all-in
+     * ========================================================
      */
     private static function nextActive(GameState $state, int $start): int
     {

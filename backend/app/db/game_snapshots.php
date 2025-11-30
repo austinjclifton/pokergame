@@ -142,3 +142,20 @@ function db_get_snapshot_by_version(PDO $pdo, int $gameId, int $version): ?array
     }
 }
 
+// -----------------------------------------------------------------------------
+// DELETE operations
+// -----------------------------------------------------------------------------
+
+/**
+ * Delete all snapshots for a game.
+ * Used when match ends to clean up completely.
+ * 
+ * @param PDO $pdo Database connection
+ * @param int $gameId Game ID
+ * @return bool True on success, false on failure
+ */
+function db_delete_snapshots(PDO $pdo, int $gameId): bool
+{
+    $stmt = $pdo->prepare("DELETE FROM game_snapshots WHERE game_id = :game_id");
+    return $stmt->execute(['game_id' => $gameId]);
+}

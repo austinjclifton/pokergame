@@ -1,211 +1,274 @@
-/* ========== HAND RESULT OVERLAY ========== */
+/* ============================================================
+   HAND RESULT OVERLAY
+   ============================================================ */
 
-.hand-result-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  animation: fadeIn 0.3s ease;
-  pointer-events: auto;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
+   .hand-result-overlay {
+    position: absolute;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.3s ease;
+    pointer-events: auto;
   }
-  to {
-    opacity: 1;
+  
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
   }
-}
+  
+  .hand-result-content {
+    position: relative;
+    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+    border: 2px solid #00bcd4;
+    border-radius: 12px;
+    padding: 2rem;
+    max-width: 800px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0, 188, 212, 0.3);
+  }
+  
+  /* ============================================================
+     HEADER
+     ============================================================ */
+  
+  .hand-result-header {
+    text-align: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #333;
+    position: relative;
+  }
+  
+  .hand-result-header h2 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.5rem;
+    color: #00bcd4;
+    font-weight: 600;
+  }
+  
+  .hand-result-pot {
+    font-size: 1.25rem;
+    color: #f5f5f5;
+    font-weight: 500;
+  }
+  
+  .hand-result-close-btn {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    background: transparent;
+    border: none;
+    color: #bbb;
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: color 0.2s ease;
+    z-index: 1100;
+  }
+  
+  .hand-result-close-btn:hover {
+    color: #fff;
+  }
+  
+  /* ============================================================
+     CARD DISPLAY
+     ============================================================ */
+  
+  .hand-result-cards {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  
+  /* NEW: wrapper receives glow, SVG stays clean */
+  .hand-result-card-wrapper {
+    display: inline-block;
+    border-radius: 10px;
+  }
+  
+  /* Actual card box */
+  .hand-result-card svg {
+    margin: 0 !important;
+    display: block;
+  }
+  
+  /* Perfect glow — applied ONLY to wrapper */
+  .best-hand-card {
+    filter: drop-shadow(0 0 6px rgba(0, 188, 212, 0.95))
+            drop-shadow(0 0 2px rgba(0, 188, 212, 0.8));
+  }
+  
+  /* Ensure SVG internals NEVER receive glow */
+  .best-hand-card svg,
+  .best-hand-card svg * {
+    filter: none !important;
+  }
 
-.hand-result-content {
-  background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-  border: 2px solid #00bcd4;
-  border-radius: 12px;
-  padding: 2rem;
-  max-width: 800px;
-  width: 90%;
-  max-height: 90vh;
-  overflow-y: auto;
-  box-shadow: 0 8px 32px rgba(0, 188, 212, 0.3);
-}
+  .hand-result-winning-hand-main {
+    margin-bottom: 12px; /* adjust to taste: 8–20px works well */
+  }
+  
 
-.hand-result-header {
-  text-align: center;
-  margin-bottom: 1.5rem;
-  border-bottom: 1px solid #333;
-  padding-bottom: 1rem;
-}
-
-.hand-result-header h2 {
-  margin: 0 0 0.5rem 0;
-  font-size: 1.5rem;
-  color: #00bcd4;
-  font-weight: 600;
-}
-
-.hand-result-pot {
-  font-size: 1.25rem;
-  color: #f5f5f5;
-  font-weight: 500;
-}
-
-.hand-result-board {
-  margin-bottom: 1.5rem;
-  text-align: center;
-}
-
-.hand-result-label {
-  font-size: 0.875rem;
-  color: #888;
-  margin-bottom: 0.5rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.hand-result-cards {
-  display: flex;
-  justify-content: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.hand-result-card {
-  transform: scale(0.9);
-}
-
-.hand-result-players {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  margin-bottom: 1.5rem;
-}
-
-.hand-result-player {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid #333;
-  border-radius: 8px;
-  padding: 1rem;
-  transition: all 0.3s ease;
-}
-
-.hand-result-player.winner {
-  border-color: #00bcd4;
-  background: rgba(0, 188, 212, 0.1);
-  box-shadow: 0 0 20px rgba(0, 188, 212, 0.3);
-}
-
-.hand-result-player.current-user {
-  border-color: #4caf50;
-  background: rgba(76, 175, 80, 0.1);
-}
-
-.hand-result-player-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.75rem;
-}
-
-.hand-result-player-name {
-  font-size: 1rem;
-  font-weight: 600;
-  color: #f5f5f5;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.winner-badge {
-  background: #00bcd4;
-  color: #000;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.hand-result-delta {
-  font-size: 1.25rem;
-  font-weight: 700;
-}
-
-.hand-result-delta.positive {
-  color: #4caf50;
-}
-
-.hand-result-delta.negative {
-  color: #f44336;
-}
-
-.hand-result-player-cards {
-  display: flex;
-  justify-content: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-
-.hand-result-hand-description {
-  text-align: center;
-  font-size: 0.875rem;
-  color: #aaa;
-  font-style: italic;
-  margin-bottom: 0.5rem;
-}
-
-.hand-result-folded {
-  text-align: center;
-  font-size: 0.875rem;
-  color: #f44336;
-  font-weight: 600;
-  text-transform: uppercase;
-  margin-bottom: 0.5rem;
-}
-
-.hand-result-stack {
-  text-align: center;
-  font-size: 0.875rem;
-  color: #888;
-  margin-top: 0.5rem;
-}
-
-.hand-result-winners {
-  margin-top: 1.5rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid #333;
-  text-align: center;
-}
-
-.hand-result-winner-summary {
-  font-size: 1rem;
-  color: #00bcd4;
-  font-weight: 500;
-  margin-bottom: 0.5rem;
-}
-
-/* Winning Hand Cards row */
-.hand-result-winning-cards {
-  margin-bottom: 1.5rem;
-  text-align: center;
-}
-
-.hand-result-winning-cards .hand-result-cards {
-  display: flex;
-  justify-content: center;
-  gap: 0.5rem;
-}
-
-/* Highlight for best 5 actual winning hand cards */
-.best-hand-card {
-  box-shadow: 0 0 14px rgba(0, 188, 212, 0.9);
-  border-radius: 8px;
-  transform: scale(1);
-}
+  
+  /* Sections */
+  .hand-result-winning-cards {
+    text-align: center;
+    margin-bottom: 1.5rem;
+  }
+  .hand-result-board {
+    text-align: center;
+    margin-bottom: 1.5rem;
+  }
+  
+  .hand-result-label {
+    font-size: 0.875rem;
+    color: #888;
+    margin-bottom: 0.5rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    text-align: center;
+  }
+  
+  /* ============================================================
+     PLAYER RESULT BOXES
+     ============================================================ */
+  
+  .hand-result-players {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  
+  .hand-result-player {
+    flex: 1 1 calc(50% - 1.5rem);
+    max-width: calc(50% - 1.5rem);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 1rem;
+    transition: all 0.3s ease;
+  }
+  
+  .hand-result-player.winner {
+    border-color: #00bcd4;
+    background: rgba(0, 188, 212, 0.1);
+    box-shadow: 0 0 20px rgba(0, 188, 212, 0.3);
+  }
+  
+  .hand-result-player.current-user {
+    border-color: #4caf50;
+    background: rgba(76, 175, 80, 0.1);
+  }
+  
+  /* Player header */
+  .hand-result-player-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+  }
+  
+  .hand-result-player-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #f5f5f5;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .winner-badge {
+    background: #00bcd4;
+    color: #000;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+  
+  .hand-result-delta {
+    font-size: 1.25rem;
+    font-weight: 700;
+  }
+  .hand-result-delta.positive { color: #4caf50; }
+  .hand-result-delta.negative { color: #f44336; }
+  
+  .hand-result-player-cards {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  
+  .hand-result-hand-description {
+    text-align: center;
+    color: #aaa;
+    font-size: 0.875rem;
+    font-style: italic;
+    margin-bottom: 0.5rem;
+  }
+  
+  .hand-result-folded {
+    text-align: center;
+    color: #f44336;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+  
+  .hand-result-stack {
+    text-align: center;
+    font-size: 0.875rem;
+    color: #888;
+    margin-top: 0.5rem;
+  }
+  
+  /* ============================================================
+     DISMISS BUTTON
+     ============================================================ */
+  
+  .hand-result-dismiss-btn {
+    display: block;
+    margin: 2rem auto 0;
+    padding: 0.8rem 2rem;
+    background: #00bcd4;
+    color: #000;
+    font-size: 1rem;
+    font-weight: 700;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.2s ease;
+  }
+  
+  .hand-result-dismiss-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px rgba(0, 188, 212, 0.5);
+  }
+  
+  .hand-result-dismiss-btn:active {
+    transform: translateY(0);
+    box-shadow: none;
+  }
+  
+  /* ============================================================
+     MOBILE
+     ============================================================ */
+  @media (max-width: 750px) {
+    .hand-result-player {
+      flex: 1 1 100%;
+      max-width: 100%;
+    }
+    .hand-result-players {
+      flex-direction: column;
+    }
+  }
+  

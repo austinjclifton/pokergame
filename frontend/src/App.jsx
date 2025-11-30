@@ -5,6 +5,7 @@ import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import LobbyPage from "./pages/LobbyPage";
 import GamePage from "./pages/GamePage";
+import MatchSummaryPage from "./pages/MatchSummaryPage";
 import Card from "./components/cards/Card";
 import API from "./config/api";
 
@@ -79,6 +80,12 @@ export default function App() {
         <Route
           path="/lobby"
           element={user ? <LobbyPage user={user} onLogout={handleLogout} /> : <Navigate to="/login" replace />}
+        />
+
+        {/* MATCH SUMMARY: protected route - MUST come before /game/:tableId */}
+        <Route
+          path="/match/:tableId/summary"
+          element={user ? <MatchSummaryPage /> : <Navigate to="/login" replace />}
         />
 
         {/* GAME: protected route */}

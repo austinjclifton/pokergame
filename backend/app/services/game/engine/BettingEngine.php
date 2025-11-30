@@ -6,12 +6,39 @@ require_once __DIR__ . '/../PlayerState.php';
 
 final class BettingEngine
 {
+    // ========================================================
+    // EFFECTIVE STACK HELPER
+    // ========================================================
+    // Determines the maximum amount a player can ever wager
+    // (prevents overshoves and eliminates sidepots).
+    // Effective stack = min(my stack, any opponent's stack+bet)
+    // ========================================================
+    private static function getEffectiveStack(PlayerState $player, array $allPlayers): int
+    {
+        $oppStacks = [];
+
+        foreach ($allPlayers as $p) {
+            if ($p !== $player && !$p->folded) {
+                // Include their current street bet so action stays matchable
+                $oppStacks[] = $p->stack + $p->bet;
+            }
+        }
+
+        if (empty($oppStacks)) {
+            return $player->stack;
+        }
+
+        return min($player->stack, min($oppStacks));
+    }
+
     /**
-     * Execute a player betting action.
+     * ========================================================
+     * EXECUTE BETTING ACTION
+     * ========================================================
      * Mutates PlayerState ONLY.
-     *
-     * GameState-level updates (pot, currentBet, raises, contributions)
-     * happen in ActionProcessor.
+     * GameState-level changes (pot/currentBet/etc.) handled
+     * by ActionProcessor.
+     * ========================================================
      */
     public static function executeAction(
         PlayerState $player,
@@ -19,11 +46,17 @@ final class BettingEngine
         int $amount,
         int $currentBet,
         int $bigBlindAmount,
-        int $lastRaiseAmount
+        int $lastRaiseAmount,
+        array $allPlayers = []   // *** ADDED to allow effective-stack logic ***
     ): array {
 
-        $callAmount     = $currentBet - $player->bet;
-        $availableChips = $player->stack;
+        // ================================
+        // Effective stack enforcement
+        // ================================
+        $effectiveChips = self::getEffectiveStack($player, $allPlayers);
+
+        $callAmount = $currentBet - $player->bet;
+        $availableChips = $effectiveChips;
 
         switch ($action) {
 
@@ -52,21 +85,14 @@ final class BettingEngine
                     ];
                 }
 
+                // Cap call to effective stack
                 $chips = min($callAmount, $availableChips);
 
-                // CHIP TRACE
-                $oldStack = $player->stack;
-                $oldContrib = $player->contribution;
-                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} BEFORE stack={$oldStack} contribution={$oldContrib}");
-                error_log("[CHIP TRACE] BETTING: action=CALL amount={$chips} oldContrib={$oldContrib} newContrib=" . ($oldContrib + $chips));
-
+                // Apply chips
                 $player->stack         -= $chips;
                 $player->bet           += $chips;
                 $player->totalInvested += $chips;
                 $player->contribution  += $chips;
-
-                // CHIP TRACE
-                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} AFTER stack={$player->stack} contribution={$player->contribution}");
 
                 if ($player->stack === 0) {
                     $player->allIn = true;
@@ -87,30 +113,23 @@ final class BettingEngine
                     return ['ok' => false, 'message' => 'Cannot bet, bet already exists'];
                 }
                 if ($amount <= 0 || $amount > $availableChips) {
-                    return ['ok' => false, 'message' => 'Invalid bet amount'];
+                    return ['ok' => false, 'message' => 'Bet exceeds effective stack'];
                 }
 
                 $chips = $amount;
 
-                // CHIP TRACE
-                $oldStack = $player->stack;
-                $oldContrib = $player->contribution;
-                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} BEFORE stack={$oldStack} contribution={$oldContrib}");
-                error_log("[CHIP TRACE] BETTING: action=BET amount={$chips} oldContrib={$oldContrib} newContrib=" . ($oldContrib + $chips));
-
+                // Apply chips
                 $player->stack         -= $chips;
                 $player->bet           += $chips;
                 $player->totalInvested += $chips;
                 $player->contribution  += $chips;
-
-                // CHIP TRACE
-                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} AFTER stack={$player->stack} contribution={$player->contribution}");
 
                 if ($player->stack === 0) {
                     $player->allIn = true;
                 }
 
                 $player->actedThisStreet = true;
+
                 return [
                     'ok'       => true,
                     'chipsUsed'=> $chips,
@@ -134,28 +153,21 @@ final class BettingEngine
                 $chipsNeeded = $raiseTo - $player->bet;
 
                 if ($chipsNeeded > $availableChips) {
-                    return ['ok' => false, 'message' => 'Not enough chips'];
+                    return ['ok' => false, 'message' => 'Raise exceeds effective stack'];
                 }
 
-                // CHIP TRACE
-                $oldStack = $player->stack;
-                $oldContrib = $player->contribution;
-                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} BEFORE stack={$oldStack} contribution={$oldContrib}");
-                error_log("[CHIP TRACE] BETTING: action=RAISE amount={$chipsNeeded} oldContrib={$oldContrib} newContrib=" . ($oldContrib + $chipsNeeded));
-
+                // Apply chips
                 $player->stack         -= $chipsNeeded;
                 $player->bet           += $chipsNeeded;
                 $player->totalInvested += $chipsNeeded;
                 $player->contribution  += $chipsNeeded;
-
-                // CHIP TRACE
-                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} AFTER stack={$player->stack} contribution={$player->contribution}");
 
                 if ($player->stack === 0) {
                     $player->allIn = true;
                 }
 
                 $player->actedThisStreet = true;
+
                 return [
                     'ok'       => true,
                     'chipsUsed'=> $chipsNeeded,
@@ -169,22 +181,19 @@ final class BettingEngine
                     return ['ok' => false, 'message' => 'Cannot all-in with 0 chips'];
                 }
 
+                // All-in is now only for effective stack
                 $chips = $availableChips;
 
-                // CHIP TRACE
-                $oldStack = $player->stack;
-                $oldContrib = $player->contribution;
-                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} BEFORE stack={$oldStack} contribution={$oldContrib}");
-                error_log("[CHIP TRACE] BETTING: action=ALLIN amount={$chips} oldContrib={$oldContrib} newContrib=" . ($oldContrib + $chips));
-
-                $player->stack          = 0;
+                // Apply chips
+                $player->stack         -= $chips;
                 $player->bet           += $chips;
                 $player->totalInvested += $chips;
                 $player->contribution  += $chips;
 
-                // CHIP TRACE
-                error_log("[CHIP TRACE] " . __FILE__ . ":" . __LINE__ . " seat={$player->seat} user={$player->user_id} AFTER stack={$player->stack} contribution={$player->contribution}");
-                $player->allIn          = true;
+                if ($player->stack === 0) {
+                    $player->allIn = true;
+                }
+
                 $player->actedThisStreet = true;
 
                 return [
@@ -199,7 +208,12 @@ final class BettingEngine
     }
 
     /**
-     * Return legal actions for the player.
+     * ========================================================
+     * LEGAL ACTION GENERATION
+     * ========================================================
+     * Uses effective stack instead of real stack to prevent
+     * offering raises/bets that cannot be matched.
+     * ========================================================
      */
     public static function getLegalActions(
         PlayerState $player,
@@ -212,8 +226,10 @@ final class BettingEngine
             return [];
         }
 
-        $callAmount     = $currentBet - $player->bet;
-        $availableChips = $player->stack;
+        // Effective stack override
+        $effectiveChips = self::getEffectiveStack($player, $allPlayers);
+        $callAmount = $currentBet - $player->bet;
+        $availableChips = $effectiveChips;
 
         $hasLiveOpponent = false;
         foreach ($allPlayers as $opp) {
@@ -225,6 +241,7 @@ final class BettingEngine
 
         $actions = [];
 
+        // --- check / call / fold ---
         if ($callAmount <= 0) {
             $actions[] = ActionType::CHECK;
         } else {
@@ -232,10 +249,12 @@ final class BettingEngine
             $actions[] = ActionType::FOLD;
         }
 
+        // --- bet ---
         if ($currentBet === 0 && $availableChips > 0) {
             $actions[] = ActionType::BET;
         }
 
+        // --- raise ---
         if (
             $currentBet > 0 &&
             $availableChips > $callAmount &&
@@ -245,6 +264,7 @@ final class BettingEngine
             $actions[] = ActionType::RAISE;
         }
 
+        // --- all-in (always allowed if >0 chips) ---
         if ($availableChips > 0) {
             $actions[] = ActionType::ALLIN;
         }
@@ -253,8 +273,7 @@ final class BettingEngine
     }
 
     /**
-     * Required by PhaseEngine.
-     * Determines whether betting round is complete.
+     * PhaseEngine requirement — unchanged
      */
     public static function isBettingRoundComplete(
         array $activePlayers,
@@ -300,7 +319,7 @@ final class BettingEngine
     }
 
     /**
-     * Posting blinds at the start of hand.
+     * BLIND POSTING — unchanged
      */
     public static function postBlinds(
         array $players,
@@ -317,28 +336,20 @@ final class BettingEngine
 
         // Small blind
         $s = min($sbAmount, $sb->stack);
-        // CHIP TRACE
-        error_log("[CHIP TRACE] BLIND: SB deduction " . __FILE__ . ":" . __LINE__ . " seat={$smallBlindSeat} user={$sb->user_id} amount={$s} BEFORE stack={$sb->stack}");
-        $sb->stack          -= $s;
-        $sb->bet            += $s;
-        $sb->totalInvested  += $s;
-        $sb->contribution   += $s;
-        $pot                += $s;
-        // CHIP TRACE
-        error_log("[CHIP TRACE] BLIND: SB deduction " . __FILE__ . ":" . __LINE__ . " seat={$smallBlindSeat} user={$sb->user_id} AFTER stack={$sb->stack} contribution={$sb->contribution}");
+        $sb->stack -= $s;
+        $sb->bet += $s;
+        $sb->totalInvested += $s;
+        $sb->contribution += $s;
+        $pot += $s;
         if ($sb->stack === 0) $sb->allIn = true;
 
         // Big blind
         $b = min($bbAmount, $bb->stack);
-        // CHIP TRACE
-        error_log("[CHIP TRACE] BLIND: BB deduction " . __FILE__ . ":" . __LINE__ . " seat={$bigBlindSeat} user={$bb->user_id} amount={$b} BEFORE stack={$bb->stack}");
-        $bb->stack          -= $b;
-        $bb->bet            += $b;
-        $bb->totalInvested  += $b;
-        $bb->contribution   += $b;
-        $pot                += $b;
-        // CHIP TRACE
-        error_log("[CHIP TRACE] BLIND: BB deduction " . __FILE__ . ":" . __LINE__ . " seat={$bigBlindSeat} user={$bb->user_id} AFTER stack={$bb->stack} contribution={$bb->contribution}");
+        $bb->stack -= $b;
+        $bb->bet += $b;
+        $bb->totalInvested += $b;
+        $bb->contribution += $b;
+        $pot += $b;
         if ($bb->stack === 0) $bb->allIn = true;
 
         return [

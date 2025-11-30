@@ -14,34 +14,32 @@ export default function GameTable({ state, currentUser }) {
     pots = [],
     actionSeat,
     mySeat,
+
+    // One-hand summary (used by overlay)
     handSummary,
-    showSummary, // still passed through but NOT trusted for overlay visibility
   } = state;
 
-  // ============================================================================
-  // LOCAL OVERLAY VISIBILITY — the fix to stop auto-hiding
-  // ============================================================================
+  // =============================================================================
+  // HAND OVERLAY VISIBILITY (client controls dismissal)
+  // =============================================================================
   const [forceShowOverlay, setForceShowOverlay] = useState(false);
 
-  // When a new summary arrives → show overlay
   useEffect(() => {
     if (handSummary) {
       setForceShowOverlay(true);
     }
   }, [handSummary]);
 
-  // Click handler from overlay
-  const handleDismissSummary = () => {
-    setForceShowOverlay(false);
-  };
+  const dismissHandOverlay = () => setForceShowOverlay(false);
 
-  // ============================================================================
-  // Build Seat Props
-  // ============================================================================
+  // =============================================================================
+  // SEAT PROP BUILDER
+  // =============================================================================
   const buildSeatProps = (seat) => {
     if (!seat) return null;
-    const amISeat = seat.seat_no === mySeat;
+
     const isMe = currentUser && seat.user_id === currentUser.id;
+    const amISeat = seat.seat_no === mySeat;
 
     return {
       seat_no: seat.seat_no,
@@ -51,24 +49,21 @@ export default function GameTable({ state, currentUser }) {
       stack: seat.stack,
       bet: seat.bet,
       status: seat.status,
-      cards: amISeat ? seat.cards || [] : [],
-      isActive: seat.status === "active" && !isMe,
-      isMe: isMe || amISeat,
+      isMe,
       isCurrentTurn: seat.seat_no === actionSeat,
+      cards: amISeat ? seat.cards || [] : [],
       handDescription: seat.handDescription,
     };
   };
 
-  // Stable order
   const orderedSeats = [...seats].sort((a, b) => a.seat_no - b.seat_no);
 
-  // ============================================================================
-  // RENDER
-  // ============================================================================
+  // =============================================================================
+  // NORMAL TABLE RENDER
+  // =============================================================================
   return (
     <div className="game-table-container-simple">
-
-      {/* ----------------- PLAYER ROW ----------------- */}
+      {/* ----------------- PLAYERS ----------------- */}
       <div className="two-player-row">
         {orderedSeats.map((seat) => {
           const props = buildSeatProps(seat);
@@ -88,12 +83,12 @@ export default function GameTable({ state, currentUser }) {
         <CommunityCards cards={community} />
       </div>
 
-      {/* ----------------- RESULT OVERLAY ----------------- */}
+      {/* ----------------- HAND RESULT OVERLAY ----------------- */}
       {forceShowOverlay && handSummary && (
         <HandResultOverlay
           summary={handSummary}
           currentUserSeat={mySeat}
-          onDismiss={handleDismissSummary}
+          onDismiss={dismissHandOverlay}
         />
       )}
     </div>

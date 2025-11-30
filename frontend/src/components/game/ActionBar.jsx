@@ -7,6 +7,9 @@ export default function ActionBar({
   currentBet = 0,
   myBet = 0,
   myStack = 0,
+  allPlayers = [],       // =======================================
+                         // REQUIRED FOR EFFECTIVE STACK CALCULATION
+                         // =======================================
   onAction,
   disabled = false,
   showChat = false,
@@ -20,24 +23,60 @@ export default function ActionBar({
   const [showRaiseControls, setShowRaiseControls] = useState(false);
 
   const callAmount = Math.max(0, currentBet - myBet);
-  const canCheck = callAmount === 0 && legalActions.includes("check");
-  const canCall = callAmount > 0 && callAmount <= myStack && legalActions.includes("call");
-  const canBet = currentBet === 0 && legalActions.includes("bet");
-  const canRaise = currentBet > 0 && legalActions.includes("raise");
+
+  // ========================================================
+  // EFFECTIVE STACK CALCULATION
+  // Matching backend logic: max amount I can wager is
+  // min(myStack, opponentStack + opponentBet).
+  // This ensures all bets/raises/all-ins are always matchable.
+  // ========================================================
+  let effectiveStack = myStack;
+
+  if (Array.isArray(allPlayers) && allPlayers.length >= 2) {
+    // Find the opponent (1v1 situation)
+    const opponent = allPlayers.find((p) => p && typeof p === "object" && p.stack !== undefined && p.bet !== undefined && p !== null && !(p.stack === myStack && p.bet === myBet));
+
+    if (opponent) {
+      effectiveStack = Math.min(myStack, opponent.stack + opponent.bet);
+    }
+  }
+
+  // ========================================================
+  // LEGAL ACTION FLAGS
+  // ========================================================
+  const canCheck =
+    callAmount === 0 && legalActions.includes("check");
+
+  const canCall =
+    callAmount > 0 &&
+    legalActions.includes("call");
+
+  const canBet =
+    currentBet === 0 &&
+    legalActions.includes("bet");
+
+  const canRaise =
+    currentBet > 0 &&
+    legalActions.includes("raise");
+
   const canFold = legalActions.includes("fold");
 
-  // Betting rules
-  const minBet = Math.max(10, currentBet === 0 ? 10 : currentBet); // at least 10
-  const maxBet = myStack;
+  // ========================================================
+  // BETTING / RAISING RULES (SLIDER LIMITS)
+  // Replaced all "myStack" max values with effectiveStack.
+  // ========================================================
+  const minBet = Math.max(10, currentBet === 0 ? 10 : currentBet);
+  const maxBet = effectiveStack;
 
-  // Raise rules: must raise TO an amount (not by)
   const minRaise = Math.max(10, currentBet === 0 ? 10 : currentBet * 2);
-  const maxRaise = myStack;
+  const maxRaise = effectiveStack;
 
-  // Snap any number to nearest 10
+  // Snap input to nearest 10
   const snap10 = (n) => Math.round(n / 10) * 10;
 
-  // Initialize amounts
+  // ========================================================
+  // INITIALIZE DEFAULT VALUES
+  // ========================================================
   useEffect(() => {
     if (canBet) {
       const base = Math.min(minBet, maxBet);
@@ -55,6 +94,9 @@ export default function ActionBar({
     if (!canRaise) setShowRaiseControls(false);
   }, [canBet, canRaise]);
 
+  // ========================================================
+  // ACTION HANDLER
+  // ========================================================
   const handleAction = (action, amount = 0) => {
     if (disabled || !onAction) return;
     onAction(action, amount);
@@ -80,6 +122,9 @@ export default function ActionBar({
     }
   };
 
+  // ========================================================
+  // RENDER
+  // ========================================================
   return (
     <div className="action-bar">
 
@@ -92,7 +137,7 @@ export default function ActionBar({
 
             <div className="action-controls-inputs">
 
-              {/* SLIDER ONLY — NO TEXT INPUT FIELD */}
+              {/* SLIDER ONLY — NO MANUAL INPUT */}
               <input
                 type="range"
                 min={showBetControls ? minBet : minRaise}
@@ -126,7 +171,7 @@ export default function ActionBar({
         </div>
       )}
 
-      {/* Main Action Buttons */}
+      {/* MAIN ACTION BUTTONS */}
       <div className="action-buttons">
 
         {canCheck && (
