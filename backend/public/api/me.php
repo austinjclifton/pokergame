@@ -8,14 +8,10 @@
 // authenticated. Returns JSON: { ok: true, user: {...} } or 401 Unauthorized.
 // -----------------------------------------------------------------------------
 
-require_once __DIR__ . '/../../config/security.php';
+require_once __DIR__ . '/../bootstrap.php';
 
 // Set allowed methods for this endpoint
 setAllowedMethods('GET, OPTIONS');
-
-require_once __DIR__ . '/../../config/db.php';
-require_once __DIR__ . '/../../lib/session.php';
-require_once __DIR__ . '/../../lib/security.php';
 
 // Apply rate limiting (100 requests/minute per IP, 200/minute per user after auth)
 apply_rate_limiting(null, 100, 200, 60);

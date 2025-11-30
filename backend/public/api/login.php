@@ -14,9 +14,8 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/../../config/security.php';
-require_once __DIR__ . '/../../config/db.php';
-require_once __DIR__ . '/../../lib/security.php'; // Includes debug_enabled()
+require_once __DIR__ . '/../bootstrap.php';
+
 require_once __DIR__ . '/../../app/services/AuthService.php';
 require_once __DIR__ . '/../../app/services/AuditService.php';
 

@@ -1,10 +1,8 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../../config/security.php';
-require_once __DIR__ . '/../../config/db.php';
-require_once __DIR__ . '/../../lib/session.php';
-require_once __DIR__ . '/../../lib/security.php'; // Includes debug_enabled()
+require_once __DIR__ . '/../bootstrap.php';
+
 require_once __DIR__ . '/../../app/services/ChallengeService.php';
 
 // Apply rate limiting (100 requests/minute per IP)
@@ -68,7 +66,7 @@ try {
 
 $service = new ChallengeService($pdo);
 try {
-    $res = $service->send((int)$user['id'], $target);
+    $res = $service->send((int)$user['user_id'], $target);
     // business "false" is still 200 for predictable client handling
     echo json_encode($res);
 } catch (Throwable $e) {

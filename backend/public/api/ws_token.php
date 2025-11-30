@@ -12,17 +12,11 @@
 declare(strict_types=1);
 
 // ---------- Bootstrap ---------------------------------------------------------
-require_once __DIR__ . '/../../config/security.php';
+require_once __DIR__ . '/../bootstrap.php';
 
-$root = dirname(__DIR__, 2); // -> backend/
-require_once $root . '/vendor/autoload.php';
-
-// Config / DB / Services (layered separation)
-require_once $root . '/config/db.php';               // -> $pdo (PDO)
-require_once $root . '/lib/session.php';             // requireSession($pdo) uses cookie 'session_id'
-require_once $root . '/app/services/AuthService.php';// auth_require_session(...)
-require_once $root . '/app/services/NonceService.php';// nonce_issue_ws_token(...)
-require_once $root . '/lib/security.php'; // apply_rate_limiting(...)
+// Services (layered separation)
+require_once __DIR__ . '/../../app/services/AuthService.php';// auth_require_session(...)
+require_once __DIR__ . '/../../app/services/NonceService.php';// nonce_issue_ws_token(...)
 
 // ---------- Small helpers -----------------------------------------------------
 

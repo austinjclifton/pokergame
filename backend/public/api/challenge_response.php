@@ -2,9 +2,8 @@
 // backend/public/api/challenge_response.php
 // Accept or decline a challenge
 
-require_once __DIR__ . '/../../config/security.php';
-require_once __DIR__ . '/../../config/db.php';
-require_once __DIR__ . '/../../lib/security.php'; // Includes debug_enabled()
+require_once __DIR__ . '/../bootstrap.php';
+
 require_once __DIR__ . '/../../app/services/AuthService.php';
 require_once __DIR__ . '/../../app/services/ChallengeService.php';
 

@@ -1,10 +1,8 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../../config/security.php';
-require_once __DIR__ . '/../../config/db.php';
-require_once __DIR__ . '/../../lib/session.php';
-require_once __DIR__ . '/../../lib/security.php';
+require_once __DIR__ . '/../bootstrap.php';
+
 require_once __DIR__ . '/../../app/services/ChallengeService.php';
 
 // Apply rate limiting (100 requests/minute per IP, 200/minute per user after auth)
@@ -66,7 +64,7 @@ try {
 
 $service = new ChallengeService($pdo);
 try {
-    $res = $service->accept($challengeId, (int)$user['id']);
+    $res = $service->accept($challengeId, (int)$user['user_id']);
     echo json_encode($res);
 } catch (Throwable $e) {
     error_log('[challenge_accept.php] ' . $e->getMessage());
