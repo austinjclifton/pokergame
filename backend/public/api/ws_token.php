@@ -15,8 +15,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/../bootstrap.php';
 
 // Services (layered separation)
-require_once __DIR__ . '/../../app/services/AuthService.php';// auth_require_session(...)
-require_once __DIR__ . '/../../app/services/NonceService.php';// nonce_issue_ws_token(...)
+require_once __DIR__ . '/../app/services/AuthService.php';// auth_require_session(...)
+require_once __DIR__ . '/../app/services/NonceService.php';// nonce_issue_ws_token(...)
 
 // ---------- Small helpers -----------------------------------------------------
 

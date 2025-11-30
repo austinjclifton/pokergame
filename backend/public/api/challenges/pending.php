@@ -2,11 +2,11 @@
 // backend/public/api/challenges/pending.php
 // Get pending challenges for the current user (simplified format)
 
-require_once __DIR__ . '/../../../bootstrap.php';
+require_once __DIR__ . '/../../bootstrap.php';
 
-require_once __DIR__ . '/../../../app/services/AuthService.php';
-require_once __DIR__ . '/../../../app/db/challenges.php';
-require_once __DIR__ . '/../../../app/db/users.php';
+require_once __DIR__ . '/../../app/services/AuthService.php';
+require_once __DIR__ . '/../../app/db/challenges.php';
+require_once __DIR__ . '/../../app/db/users.php';
 
 // Apply rate limiting
 apply_rate_limiting(null, 100, 200, 60);

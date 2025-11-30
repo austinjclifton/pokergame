@@ -20,7 +20,7 @@ require_once __DIR__ . '/../bootstrap.php';
 // Set allowed methods for this endpoint
 setAllowedMethods('GET, OPTIONS');
 
-require_once __DIR__ . '/../../app/services/NonceService.php';
+require_once __DIR__ . '/../app/services/NonceService.php';
 
 // Apply rate limiting (100 requests/minute per IP)
 apply_rate_limiting(null, 100, 200, 60);

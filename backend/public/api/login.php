@@ -16,8 +16,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../bootstrap.php';
 
-require_once __DIR__ . '/../../app/services/AuthService.php';
-require_once __DIR__ . '/../../app/services/AuditService.php';
+require_once __DIR__ . '/../app/services/AuthService.php';
+require_once __DIR__ . '/../app/services/AuditService.php';
 
 // Allow only POST + OPTIONS (CORS-friendly)
 setAllowedMethods('POST, OPTIONS');
