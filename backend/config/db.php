@@ -5,10 +5,12 @@
 declare(strict_types=1);
 
 // MySQL connection settings for RIT Apache VM
-$DB_HOST = '127.0.0.1';       // Force TCP (avoid Unix socket issues)
-$DB_NAME = 'pokergame';
-$DB_USER = 'root';
-$DB_PASS = 'student';
+// Can be overridden via environment variables for local development
+// Note: getenv() returns false if var doesn't exist, empty string if it exists but is empty
+$DB_HOST = (getenv('DB_HOST') !== false) ? getenv('DB_HOST') : '127.0.0.1';       // Force TCP (avoid Unix socket issues)
+$DB_NAME = (getenv('DB_NAME') !== false) ? getenv('DB_NAME') : 'pokergame';
+$DB_USER = (getenv('DB_USER') !== false) ? getenv('DB_USER') : 'root';
+$DB_PASS = (getenv('DB_PASS') !== false) ? getenv('DB_PASS') : '';
 
 try {
     $pdo = new PDO(

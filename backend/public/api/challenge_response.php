@@ -2,7 +2,8 @@
 // backend/public/api/challenge_response.php
 // Accept or decline a challenge
 
-require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
 
 // require_once __DIR__ . '/../app/services/AuthService.php';
 // require_once __DIR__ . '/../app/services/ChallengeService.php';
@@ -19,14 +20,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 try {
     // Get current user
     $user = auth_require_session($pdo);
-    $userId = (int)$user['id'];
-    
+    $userId = (int) $user['id'];
+
     // Re-apply with user ID for user-based limiting
     apply_rate_limiting($userId, 100, 200, 60);
 
     // Get request data
     $rawInput = file_get_contents('php://input');
-    
+
     // Validate payload size (5KB max)
     $payloadValidation = validate_json_payload_size($rawInput, 5120);
     if (!$payloadValidation['valid']) {
@@ -34,15 +35,15 @@ try {
         echo json_encode(['ok' => false, 'error' => $payloadValidation['error']]);
         exit;
     }
-    
+
     $input = json_decode($rawInput, true);
     if ($input === null) {
         http_response_code(400);
         echo json_encode(['ok' => false, 'error' => 'Invalid JSON payload']);
         exit;
     }
-    
-    $challengeId = (int)($input['challenge_id'] ?? 0);
+
+    $challengeId = (int) ($input['challenge_id'] ?? 0);
     $action = trim($input['action'] ?? '');
     $token = $input['token'] ?? '';
 
@@ -58,7 +59,7 @@ try {
     try {
         validate_csrf_token($pdo, $token, $user['session_id']);
     } catch (RuntimeException $e) {
-        $errorMsg = match($e->getMessage()) {
+        $errorMsg = match ($e->getMessage()) {
             'CSRF_TOKEN_MISSING' => 'Missing CSRF token',
             'CSRF_TOKEN_INVALID' => 'Invalid CSRF token',
             'CSRF_TOKEN_EXPIRED' => 'CSRF token expired',
@@ -74,7 +75,7 @@ try {
 
     // Use ChallengeService to handle the response
     $challengeService = new ChallengeService($pdo);
-    
+
     if ($action === 'accept') {
         $result = $challengeService->accept($challengeId, $userId);
     } else {
@@ -101,12 +102,12 @@ try {
         'ok' => false,
         'error' => 'Failed to process challenge response',
     ];
-    
+
     // Only expose error details in debug mode
     if (debug_enabled()) {
         $response['message'] = $e->getMessage();
     }
-    
+
     echo json_encode($response);
 }
 ?>

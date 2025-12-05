@@ -1,13 +1,36 @@
 <?php
 // backend/bootstrap.php
-// -----------------------------------------------------------------------------
-// Central bootstrap used by all API endpoints in both local and production.
-// -----------------------------------------------------------------------------
-
 declare(strict_types=1);
 
-// Backend root is simply this directory
+// Backend root
 define('BASE_PATH', __DIR__);
+
+// ---------------------------------------------------------------
+// LOCAL vs VM detection
+// ---------------------------------------------------------------
+$host = $_SERVER['HTTP_HOST'] ?? '';
+$https = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on';
+
+// Local dev = no HTTPS + localhost or 127.x.x.x
+$runningLocally =
+    (!$https) &&
+    (str_starts_with($host, 'localhost') || str_starts_with($host, '127.'));
+
+// ---------------------------------------------------------------
+// CORS (LOCAL ONLY)
+// ---------------------------------------------------------------
+if ($runningLocally) {
+    header("Access-Control-Allow-Origin: http://localhost:5173");
+    header("Access-Control-Allow-Credentials: true");
+    header("Access-Control-Allow-Headers: Content-Type, Authorization");
+    header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
+
+    // Preflight requests must exit early
+    if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+        http_response_code(200);
+        exit();
+    }
+}
 
 // ---------------------------------------------------------------
 // Output headers (API endpoints only)
@@ -16,7 +39,7 @@ header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 
 // ---------------------------------------------------------------
-// Composer autoload (MUST load before any class usage)
+// Composer autoload
 // ---------------------------------------------------------------
 require_once BASE_PATH . '/vendor/autoload.php';
 
@@ -31,26 +54,20 @@ require_once BASE_PATH . '/config/security.php';
 // ---------------------------------------------------------------
 if (session_status() === PHP_SESSION_NONE) {
     ini_set('session.cookie_httponly', '1');
-    ini_set('session.cookie_secure', '1');
+    ini_set('session.cookie_secure', '1');  // HTTPS VM enforces secure cookies
     ini_set('session.cookie_samesite', 'Lax');
     ini_set('session.use_strict_mode', '1');
     session_start();
 }
 
 // ---------------------------------------------------------------
-// Load internal libraries / helpers
+// Load internal libraries
 // ---------------------------------------------------------------
-
-// helper functions (procedural)
 require_once BASE_PATH . '/lib/security.php';
 require_once BASE_PATH . '/lib/session.php';
-
-// procedural nonce helpers (your functions)
 require_once BASE_PATH . '/app/services/NonceService.php';
 require_once BASE_PATH . '/app/services/AuthService.php';
-
-// Database helpers
-require_once BASE_PATH . '/app/db/challenges.php';   // <-- REQUIRED FOR pending.php
+require_once BASE_PATH . '/app/db/challenges.php';
 
 // ---------------------------------------------------------------
 // Bootstrap complete

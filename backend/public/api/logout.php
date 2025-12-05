@@ -14,7 +14,8 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
 
 // Set allowed methods for this endpoint
 setAllowedMethods('POST, OPTIONS');
@@ -33,7 +34,7 @@ try {
         echo json_encode(['ok' => false, 'error' => 'Not authenticated']);
         exit;
     }
-    
+
     // Parse request body for CSRF token
     // Check for test input first (for PHPUnit testing)
     $rawInput = $GLOBALS['_TEST_INPUT'] ?? file_get_contents('php://input');
@@ -43,15 +44,15 @@ try {
         echo json_encode(['ok' => false, 'error' => $payloadValidation['error']]);
         exit;
     }
-    
+
     $data = json_decode($rawInput, true) ?? [];
     $token = $data['token'] ?? '';
-    
+
     // Validate CSRF token (bound to current session)
     try {
         validate_csrf_token($pdo, $token, $user['session_id']);
     } catch (RuntimeException $e) {
-        $errorMsg = match($e->getMessage()) {
+        $errorMsg = match ($e->getMessage()) {
             'CSRF_TOKEN_MISSING' => 'Missing CSRF token',
             'CSRF_TOKEN_INVALID' => 'Invalid CSRF token',
             'CSRF_TOKEN_EXPIRED' => 'CSRF token expired',
@@ -64,10 +65,10 @@ try {
         echo json_encode(['ok' => false, 'error' => $errorMsg]);
         exit;
     }
-    
+
     // Apply user-based rate limiting after authentication
     apply_rate_limiting($user['user_id'], 100, 200, 60);
-    
+
     $revoked = auth_logout_user($pdo);
 
     if ($revoked) {

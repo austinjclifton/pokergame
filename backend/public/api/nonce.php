@@ -15,7 +15,8 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
 
 // Set allowed methods for this endpoint
 setAllowedMethods('GET, OPTIONS');
@@ -32,11 +33,11 @@ try {
     error_log('[nonce.php] ' . $e->getMessage());
     http_response_code(500);
     $response = ['ok' => false, 'message' => 'Server error'];
-    
+
     // Only expose error details in debug mode
     if (debug_enabled()) {
         $response['detail'] = $e->getMessage();
     }
-    
+
     echo json_encode($response);
 }

@@ -1,5 +1,6 @@
 <?php
-require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
 
 require_once BASE_PATH . '/app/db/challenges.php';
 require_once BASE_PATH . '/app/db/users.php';
@@ -10,7 +11,7 @@ try {
     $user = auth_require_session($pdo);
     apply_rate_limiting($user['id'], 100, 200, 60);
 
-    $userId = (int)$user['id'];
+    $userId = (int) $user['id'];
     $pending = db_get_pending_challenges_by_user($pdo, $userId);
 
     $outgoing = [];
@@ -25,8 +26,8 @@ try {
                     : $c['from_username']),
             'opponent_id' =>
                 $c['from_user_id'] == $userId
-                    ? (int)$c['to_user_id']
-                    : (int)$c['from_user_id'],
+                ? (int) $c['to_user_id']
+                : (int) $c['from_user_id'],
             'created_at' => $c['created_at'],
         ];
 

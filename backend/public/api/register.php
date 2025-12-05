@@ -16,7 +16,8 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
 
 // Set allowed methods for this endpoint
 setAllowedMethods('POST, OPTIONS');
@@ -46,8 +47,8 @@ if ($data === null) {
 
 $username = trim($data['username'] ?? '');
 $password = $data['password'] ?? '';
-$email    = trim($data['email'] ?? '');
-$nonce    = $data['token'] ?? '';
+$email = trim($data['email'] ?? '');
+$nonce = $data['token'] ?? '';
 
 // ---------------- Basic validation ----------------
 if (!$username || !$email || !$password || !$nonce) {

@@ -12,7 +12,8 @@
 declare(strict_types=1);
 
 // ---------- Bootstrap ---------------------------------------------------------
-require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
 
 // Services (layered separation)
 // require_once __DIR__ . '/../app/services/AuthService.php';// auth_require_session(...)
@@ -22,11 +23,13 @@ require_once __DIR__ . '/../bootstrap.php';
 
 // Note: debug_enabled() is now defined in lib/security.php
 // This local function is kept for backward compatibility
-function dbg_enabled(): bool {
+function dbg_enabled(): bool
+{
     return debug_enabled(); // Use centralized function
 }
 
-function json_out(array $payload, int $code = 200): void {
+function json_out(array $payload, int $code = 200): void
+{
     http_response_code($code);
     echo json_encode($payload, JSON_UNESCAPED_SLASHES);
     exit;
@@ -66,15 +69,15 @@ try {
             json_out($response, 401);
         }
         $user = [
-            'id'         => (int)$session['user_id'],
-            'username'   => $session['username'],
-            'email'      => $session['email'],
-            'session_id' => (int)$session['session_id'],
+            'id' => (int) $session['user_id'],
+            'username' => $session['username'],
+            'email' => $session['email'],
+            'session_id' => (int) $session['session_id'],
         ];
     }
 
     // Sanity checks
-    if (empty($user['session_id']) || (int)$user['session_id'] <= 0) {
+    if (empty($user['session_id']) || (int) $user['session_id'] <= 0) {
         json_out(['ok' => false, 'error' => 'invalid_session_context'], 401);
     }
 
@@ -91,9 +94,9 @@ try {
 
     // 3) Respond
     json_out([
-        'ok'        => true,
-        'token'     => $tokenData['token'],
-        'expiresIn' => (int)($tokenData['expiresIn'] ?? $ttl),
+        'ok' => true,
+        'token' => $tokenData['token'],
+        'expiresIn' => (int) ($tokenData['expiresIn'] ?? $ttl),
     ]);
 
 } catch (\Throwable $e) {

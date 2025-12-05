@@ -17,17 +17,19 @@ require_once __DIR__ . '/LobbySocket.php';
 require_once __DIR__ . '/GameSocket.php';
 
 /**
- * Parse query string from the WS upgrade request.
+ * Parse query string from WS request
  */
-function ws_parse_query(RequestInterface $req): array {
+function ws_parse_query(RequestInterface $req): array
+{
     parse_str($req->getUri()->getQuery() ?? '', $out);
     return is_array($out) ? $out : [];
 }
 
 /**
- * Extract a cookie from the upgrade request.
+ * Extract cookie from WS request
  */
-function ws_get_cookie(RequestInterface $req, string $name): ?string {
+function ws_get_cookie(RequestInterface $req, string $name): ?string
+{
     foreach ($req->getHeader('Cookie') as $hdr) {
         foreach (explode(';', $hdr) as $pair) {
             [$k, $v] = array_map('trim', explode('=', $pair, 2) + [null, null]);
@@ -40,19 +42,20 @@ function ws_get_cookie(RequestInterface $req, string $name): ?string {
 }
 
 /**
- * Unified WebSocket authentication.
+ * Unified WebSocket authentication for local + VM
  */
-function ws_auth(PDO $pdo, RequestInterface $req): ?array {
-    $query  = ws_parse_query($req);
-    $token  = trim((string)($query['token'] ?? ''));
+function ws_auth(PDO $pdo, RequestInterface $req): ?array
+{
+    $query = ws_parse_query($req);
+    $token = trim((string) ($query['token'] ?? ''));
     $cookie = ws_get_cookie($req, 'session_id');
 
-    // Preferred short-lived token
+    // Short-lived WS token
     if ($token !== '') {
         $ctx = db_consume_ws_nonce($pdo, $token);
         if ($ctx) {
             return [
-                'user_id'    => $ctx['user_id'],
+                'user_id' => $ctx['user_id'],
                 'session_id' => $ctx['session_id'],
             ];
         }
@@ -64,8 +67,8 @@ function ws_auth(PDO $pdo, RequestInterface $req): ?array {
         try {
             $user = auth_require_session($pdo);
             return [
-                'user_id'    => (int)$user['id'],
-                'session_id' => (int)$user['session_id'],
+                'user_id' => (int) $user['id'],
+                'session_id' => (int) $user['session_id'],
             ];
         } catch (RuntimeException $e) {
             return null;
@@ -75,24 +78,48 @@ function ws_auth(PDO $pdo, RequestInterface $req): ?array {
     return null;
 }
 
-$WS_HOST = '0.0.0.0';
-$WS_PORT = (int)(getenv('WS_PORT') ?: 8080);
+// -----------------------------------------------------------
+// Environment detection
+// -----------------------------------------------------------
 
-echo "[WS] Listening on {$WS_HOST}:{$WS_PORT} (internal routes: /lobby, /game)\n";
+// Local if: CLI / localhost / 127.0.0.1
+$IS_LOCAL = (
+    php_sapi_name() === 'cli-server' ||
+    str_contains(gethostname(), 'local') ||
+    isset($argv) ||
+    in_array($_SERVER['HOSTNAME'] ?? '', ['localhost', '127.0.0.1'])
+);
+
+// VM host for HAProxy routing
+$VM_HOST = 'pokergame.webdev.gccis.rit.edu';
+
+// Bind host for WebSocket server process
+$WS_HOST = '0.0.0.0';            // Listen everywhere
+$WS_PORT = (int) (getenv('WS_PORT') ?: 8080);
+
+// Host header Ratchet expects
+$APP_HOST = $IS_LOCAL ? 'localhost' : $VM_HOST;
+
+echo "[WS] Mode: " . ($IS_LOCAL ? "LOCAL" : "VM") . "\n";
+echo "[WS] Listening on {$WS_HOST}:{$WS_PORT}\n";
+echo "[WS] Expecting Host header: {$APP_HOST}\n";
 
 $lobby = new LobbySocket($pdo);
-$game  = new GameSocket($pdo);
+$game = new GameSocket($pdo);
 
-echo "Constructing Ratchet App…\n";
-$app = new RatchetApp('pokergame.webdev.gccis.rit.edu', $WS_PORT, '0.0.0.0');
+echo "[WS] Constructing Ratchet App...\n";
 
-echo "Adding internal routes…\n";
+// IMPORTANT:
+//   LOCAL → accept Host: localhost
+//   VM    → accept Host: pokergame.webdev.gccis.rit.edu
+$app = new RatchetApp($APP_HOST, $WS_PORT, $WS_HOST);
 
-// IMPORTANT: These are *internal* routes.
-// HAProxy rewrites /ws/lobby → /lobby, and /ws/game → /game
+echo "[WS] Adding routes...\n";
+
+// Internal routes (HAProxy rewrites /ws/lobby → /lobby on VM)
 $app->route('/lobby', new AuthenticatedServer($pdo, $lobby, 'lobby'), ['*']);
-$app->route('/game',  new AuthenticatedServer($pdo, $game,  'game'), ['*']);
+$app->route('/game', new AuthenticatedServer($pdo, $game, 'game'), ['*']);
 
-echo "Routes registered. Starting server…\n";
+echo "[WS] Routes registered. Starting...\n";
 
 $app->run();

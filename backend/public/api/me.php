@@ -8,7 +8,7 @@
 // authenticated. Returns JSON: { ok: true, user: {...} } or 401 Unauthorized.
 // -----------------------------------------------------------------------------
 
-require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
 
 // Set allowed methods for this endpoints
 setAllowedMethods('GET, OPTIONS');
@@ -33,10 +33,10 @@ try {
     }
 
     $normalized = [
-        'id'          => (int)$user['user_id'],
-        'username'    => escape_html($user['username']),
-        'email'       => $user['email'] ?? null,
-        'session_id'  => $user['session_id'] ?? null,
+        'id' => (int) $user['user_id'],
+        'username' => escape_html($user['username']),
+        'email' => $user['email'] ?? null,
+        'session_id' => $user['session_id'] ?? null,
     ];
 
     echo json_encode([

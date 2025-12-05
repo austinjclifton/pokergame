@@ -1,7 +1,8 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
 
 // require_once __DIR__ . '/../app/services/ChallengeService.php';
 
@@ -50,7 +51,7 @@ if ($target === '') {
 try {
     validate_csrf_token($pdo, $token, $user['session_id']);
 } catch (RuntimeException $e) {
-    $errorMsg = match($e->getMessage()) {
+    $errorMsg = match ($e->getMessage()) {
         'CSRF_TOKEN_MISSING' => 'Missing CSRF token',
         'CSRF_TOKEN_INVALID' => 'Invalid CSRF token',
         'CSRF_TOKEN_EXPIRED' => 'CSRF token expired',
@@ -66,18 +67,18 @@ try {
 
 $service = new ChallengeService($pdo);
 try {
-    $res = $service->send((int)$user['user_id'], $target);
+    $res = $service->send((int) $user['user_id'], $target);
     // business "false" is still 200 for predictable client handling
     echo json_encode($res);
 } catch (Throwable $e) {
     error_log('[challenge.php] ' . $e->getMessage());
     http_response_code(500);
     $response = ['ok' => false, 'message' => 'Server error'];
-    
+
     // Only expose error details in debug mode
     if (debug_enabled()) {
         $response['detail'] = $e->getMessage();
     }
-    
+
     echo json_encode($response);
 }

@@ -14,7 +14,8 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
 
 // require_once __DIR__ . '/../app/services/AuthService.php';
 // require_once __DIR__ . '/../app/services/AuditService.php';
@@ -30,7 +31,8 @@ header('Content-Type: application/json; charset=utf-8');
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
-function json_out(array $data, int $status = 200): void {
+function json_out(array $data, int $status = 200): void
+{
     http_response_code($status);
     echo json_encode($data, JSON_UNESCAPED_SLASHES);
     exit;
@@ -54,16 +56,16 @@ try {
 
     // Read + validate input
     $rawInput = file_get_contents('php://input');
-    
+
     // Validate payload size (5KB max for login)
     $payloadValidation = validate_json_payload_size($rawInput, 5120);
     if (!$payloadValidation['valid']) {
         json_out(['ok' => false, 'error' => $payloadValidation['error']], 413);
     }
-    
+
     $input = json_decode($rawInput, true, 512, JSON_THROW_ON_ERROR);
-    $username = trim((string)($input['username'] ?? ''));
-    $password = (string)($input['password'] ?? '');
+    $username = trim((string) ($input['username'] ?? ''));
+    $password = (string) ($input['password'] ?? '');
 
     if ($username === '' || $password === '') {
         json_out(['ok' => false, 'error' => 'missing_credentials'], 400);
