@@ -83,11 +83,14 @@ function ws_auth(PDO $pdo, RequestInterface $req): ?array
 // -----------------------------------------------------------
 
 // Local if: CLI / localhost / 127.0.0.1
+
+// VM-safe environment detection
+$hostname = trim(shell_exec('hostname'));
 $IS_LOCAL = (
-    php_sapi_name() === 'cli-server' ||
-    str_contains(gethostname(), 'local') ||
-    isset($argv) ||
-    in_array($_SERVER['HOSTNAME'] ?? '', ['localhost', '127.0.0.1'])
+    str_contains($hostname, 'local') ||
+    str_contains($hostname, 'MacBook') ||
+    str_contains($hostname, 'mbp') ||
+    php_sapi_name() === 'cli-server'
 );
 
 // VM host for HAProxy routing
