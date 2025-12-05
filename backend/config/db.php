@@ -7,25 +7,40 @@ declare(strict_types=1);
 // ---------------------------------------------------------------
 // Detect LOCAL vs VM environment
 // ---------------------------------------------------------------
-// Detect LOCAL vs VM environment --------------------------------------------
+
+// True when running from command-line (WS server, CLI tests, etc.)
 $runningInCli = php_sapi_name() === 'cli';
 
+// Detect if we are on the VM by hostname.
+// Your VM hostname is "student-virtual-machine".
+$hostname = gethostname();
+$isVm = str_contains($hostname, 'student-virtual-machine');
+
+// Local environment rules:
+// - CLI only counts as LOCAL when NOT on the VM
+// - PHP dev server counts as LOCAL
+// - localhost / 127.0.0.1 via HTTP counts as LOCAL
 $IS_LOCAL =
-    $runningInCli ||                                                // Fix for WS server
+    (!$isVm && $runningInCli) ||
     php_sapi_name() === 'cli-server' ||
     str_contains($_SERVER['HTTP_HOST'] ?? '', 'localhost') ||
     str_contains($_SERVER['HTTP_HOST'] ?? '', '127.0.0.1');
 
+// ---------------------------------------------------------------
+// Assign DB credentials
+// ---------------------------------------------------------------
 if ($IS_LOCAL) {
+    // LOCAL (MacBook)
     $DB_HOST = '127.0.0.1';
     $DB_NAME = 'pokergame';
     $DB_USER = 'root';
-    $DB_PASS = '';   // local DB has no password
+    $DB_PASS = '';  // no password locally
 } else {
+    // VM (Apache + WebSocket server)
     $DB_HOST = getenv('DB_HOST') ?: '127.0.0.1';
     $DB_NAME = getenv('DB_NAME') ?: 'pokergame';
     $DB_USER = getenv('DB_USER') ?: 'root';
-    $DB_PASS = getenv('DB_PASS') ?: 'student';
+    $DB_PASS = getenv('DB_PASS') ?: 'student'; // required on VM
 }
 
 // ---------------------------------------------------------------
