@@ -10,7 +10,7 @@
 
 require_once __DIR__ . '/../bootstrap.php';
 
-// Set allowed methods for this endpoint
+// Set allowed methods for this endpoints
 setAllowedMethods('GET, OPTIONS');
 
 // Apply rate limiting (100 requests/minute per IP, 200/minute per user after auth)

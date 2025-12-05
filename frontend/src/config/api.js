@@ -20,7 +20,7 @@ export const API = {
     nonce: `${API_BASE_URL}/api/nonce.php`,
     wsToken: `${API_BASE_URL}/api/ws_token.php`,
     challenges: `${API_BASE_URL}/api/challenges.php`,
-    challengesPending: `${API_BASE_URL}/api/challenges/pending.php`,
+    challengesPending: `${API_BASE_URL}/api/pending.php`,
     challenge: `${API_BASE_URL}/api/challenge.php`,
     challengeAccept: `${API_BASE_URL}/api/challenge_accept.php`,
     challengeResponse: `${API_BASE_URL}/api/challenge_response.php`,

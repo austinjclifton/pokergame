@@ -21,7 +21,7 @@ require_once __DIR__ . '/../bootstrap.php';
 // Set allowed methods for this endpoint
 setAllowedMethods('POST, OPTIONS');
 
-require_once __DIR__ . '/../app/services/AuthService.php';
+// require_once __DIR__ . '/../app/services/AuthService.php';
 
 // Apply strict rate limiting for registration endpoint (5 requests/minute per IP)
 apply_auth_rate_limiting(get_client_ip(), 5, 60);
