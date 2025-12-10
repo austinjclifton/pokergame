@@ -92,16 +92,24 @@
     border-radius: 10px;
   }
   
-  /* Actual card box */
+  /* Actual card box - same size as flip cards */
+  .hand-result-card {
+    width: 100px;
+    height: 150px;
+    flex-shrink: 0;
+  }
+  
   .hand-result-card svg {
     margin: 0 !important;
+    width: 100px !important;
+    height: 150px !important;
     display: block;
   }
   
   /* Perfect glow — applied ONLY to wrapper */
   .best-hand-card {
-    filter: drop-shadow(0 0 6px rgba(0, 188, 212, 0.95))
-            drop-shadow(0 0 2px rgba(0, 188, 212, 0.8));
+    filter: drop-shadow(0 0 4px rgba(0, 188, 212, 0.7))
+            drop-shadow(0 0 1px rgba(0, 188, 212, 0.5));
   }
   
   /* Ensure SVG internals NEVER receive glow */
@@ -171,8 +179,8 @@
   /* Player header */
   .hand-result-player-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 1rem;
     margin-bottom: 0.75rem;
   }
   

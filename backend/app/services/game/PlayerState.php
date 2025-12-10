@@ -31,6 +31,7 @@ final class PlayerState
     {
         $this->seat  = $seat;
         $this->stack = $stack;
+        $this->contribution = 0;
     }
 
     /**

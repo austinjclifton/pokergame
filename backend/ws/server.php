@@ -90,6 +90,7 @@ $IS_LOCAL = (
     str_contains($hostname, 'local') ||
     str_contains($hostname, 'MacBook') ||
     str_contains($hostname, 'mbp') ||
+    str_contains($hostname, 'Mac') ||
     php_sapi_name() === 'cli-server'
 );
 
@@ -108,7 +109,7 @@ echo "[WS] Listening on {$WS_HOST}:{$WS_PORT}\n";
 echo "[WS] Expecting Host header: {$APP_HOST}\n";
 
 $lobby = new LobbySocket($pdo);
-$game = new GameSocket($pdo);
+$game = new GameSocket($pdo, $lobby);
 
 echo "[WS] Constructing Ratchet App...\n";
 

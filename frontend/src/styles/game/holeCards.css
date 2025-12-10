@@ -31,10 +31,7 @@
   justify-content: center;
 }
 
-.hole-card {
-  transform: scale(0.7);
-  transform-origin: center;
-}
+/* Hole card uses shared flip-card styles */
 
 .flip-cards-btn {
   margin-top: 0.5rem;
@@ -49,13 +46,16 @@
   transition: all 0.2s ease;
 }
 
-.flip-cards-btn:hover {
+.flip-cards-btn:hover:not(:disabled) {
   background: #00bcd4;
   color: #111;
   border-color: #00bcd4;
 }
 
-.card-back-wrapper {
-  display: inline-block;
+.flip-cards-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
+
+/* Card back wrapper and SVG styles are in shared cardFlip.css */
 

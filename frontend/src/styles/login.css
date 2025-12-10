@@ -94,6 +94,37 @@ form {
   text-decoration: underline;
 }
 
+/* Absolutely positioned so it does NOT shift layout */
+.success-banner-overlay {
+  position: absolute;
+  top: 7%;
+  left: 50%;
+  transform: translateX(-50%);
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  color: white;
+  font-family: "Roboto Condensed", sans-serif;
+  font-size: 1rem;
+
+  pointer-events: none; /* overlay only, doesn't block inputs */
+
+  opacity: 1;
+  animation: fadeOut 4s forwards;
+}
+
+.success-icon {
+  font-size: 1.2rem;
+}
+
+@keyframes fadeOut {
+  0%   { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 /* === RESPONSIVE === */
 @media (max-width: 480px) {
   .login-title {

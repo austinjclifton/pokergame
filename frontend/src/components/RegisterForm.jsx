@@ -1,11 +1,10 @@
 // src/components/RegisterForm.jsx
 // -----------------------------------------------------------------------------
-// Handles new user registration for PokerGame.
-// Validates inputs client-side, fetches a CSRF nonce from the backend,
-// and sends credentials securely to /api/register.php.
+// Registration form for PokerGame.
+// Handles user input, client-side validation, CSRF nonce retrieval, and
+// submission to /api/register.php.
 //
-// The backend (PHP) verifies the nonce, hashes the password,
-// creates a user, and sets an HttpOnly session cookie.
+// On success, parent component (RegisterPage) handles redirect to /login.
 // -----------------------------------------------------------------------------
 
 import React, { useState } from "react";
@@ -23,10 +22,9 @@ export default function RegisterForm({ onRegister }) {
   const [error, setError] = useState("");
   const [disabled, setDisabled] = useState(false);
 
-  // Basic sanitizer for angle brackets
+  // Basic sanitization (prevents HTML injection in controlled inputs)
   const sanitize = (str) => str.replace(/[<>]/g, "").trim();
 
-  // Handle typing changes
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
@@ -65,29 +63,39 @@ export default function RegisterForm({ onRegister }) {
     setDisabled(true);
 
     try {
-      // 1. Get a CSRF nonce from backend (ties to a session_id cookie)
-      const nonceRes = await fetch(API.endpoints.nonce, { credentials: "include" });
+      // 1. Retrieve CSRF nonce (session cookie created here)
+      const nonceRes = await fetch(API.endpoints.nonce, {
+        credentials: "include",
+      });
+
+      if (!nonceRes.ok) {
+        throw new Error("Failed to retrieve security token");
+      }
+
       const nonceData = await nonceRes.json();
       const token = nonceData?.nonce;
 
-      if (!token) throw new Error("Failed to retrieve nonce");
+      if (!token) {
+        throw new Error("No security token received");
+      }
 
       // 2. Send registration request
       const res = await fetch(API.endpoints.register, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include", // include cookie set by nonce.php
+        credentials: "include", // send session cookie with request
         body: JSON.stringify({ username, email, password, token }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.ok) {
         throw new Error(data.error || "Registration failed");
       }
 
-      // 3. Notify parent (AuthGate or RegisterPage)
+      // 3. Notify parent — parent will redirect to /login
       onRegister?.(data.user);
+
     } catch (err) {
       setError(err.message || "Registration failed. Please try again.");
     } finally {

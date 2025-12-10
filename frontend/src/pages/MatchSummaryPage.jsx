@@ -98,7 +98,7 @@ export default function MatchSummaryPage() {
             {holeCards.length === 2 && (
               <div className="card-section">
                 <h3>Winner's Hole Cards</h3>
-                <div className="hole-cards card-scale-small">
+                <div className="hole-cards">
                   {holeCards.map((raw, i) => {
                     const card = parseCard(raw);
                     if (!card) return null;
@@ -112,7 +112,7 @@ export default function MatchSummaryPage() {
             {boardCards.length > 0 && (
               <div className="card-section">
                 <h3>Final Board</h3>
-                <div className="board-cards card-scale-small">
+                <div className="board-cards">
                   {boardCards.map((raw, i) => {
                     const card = parseCard(raw);
                     if (!card) return null;

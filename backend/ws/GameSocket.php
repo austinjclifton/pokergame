@@ -23,6 +23,7 @@ require_once __DIR__ . '/../app/services/game/GamePersistence.php';
 require_once __DIR__ . '/../app/services/SubscriptionService.php';
 require_once __DIR__ . '/../app/services/AuditService.php';
 require_once __DIR__ . '/../app/services/PresenceService.php';
+require_once __DIR__ . '/LobbySocket.php';
 
 require_once __DIR__ . '/../app/db/game_snapshots.php';
 require_once __DIR__ . '/../app/db/games.php';
@@ -65,6 +66,7 @@ final class GameSocket implements MessageComponentInterface
     protected GamePersistence $persistenceService;
     protected SubscriptionService $subscriptionService;
     protected PresenceService $presenceService;
+    protected ?LobbySocket $lobbySocket = null;
 
     /**
      * Connection metadata by Ratchet resourceId.
@@ -113,13 +115,14 @@ final class GameSocket implements MessageComponentInterface
     /** @var ?GameSocket Static instance for broadcasting from GameService */
     private static ?GameSocket $instance = null;
 
-    public function __construct(PDO $pdo)
+    public function __construct(PDO $pdo, ?LobbySocket $lobbySocket = null)
     {
         $this->clients = new \SplObjectStorage();
         $this->pdo = $pdo;
         $this->persistenceService = new GamePersistence($pdo, self::SNAPSHOT_MAX_GAP);
         $this->subscriptionService = new SubscriptionService($pdo);
         $this->presenceService = new PresenceService($pdo);
+        $this->lobbySocket = $lobbySocket;
         self::$instance = $this;
         echo "🎮 GameSocket initialized\n";
     }
@@ -208,6 +211,10 @@ final class GameSocket implements MessageComponentInterface
             // Always update (even on refresh) to ensure presence reflects current state
             try {
                 db_upsert_presence($this->pdo, $uid, $uname, 'in_game');
+                // Broadcast presence update to lobby clients
+                if ($this->lobbySocket !== null) {
+                    $this->lobbySocket->broadcastPresenceUpdate($uid, $uname, 'in_game');
+                }
             } catch (\Throwable $e) {
                 error_log("[GameSocket] Error updating presence to in_game for user {$uid}: " . $e->getMessage());
             }
@@ -407,6 +414,7 @@ final class GameSocket implements MessageComponentInterface
             $matchEnded  = $result['matchEnded']  ?? false;
             $winner      = $result['winner']      ?? null;
             $loser       = $result['loser']       ?? null;
+            $reason      = $result['reason']      ?? null;
             
             // If the entire MATCH is over (one player busted), end the match now
             if ($matchEnded) {
@@ -435,12 +443,67 @@ final class GameSocket implements MessageComponentInterface
                 // Clear seats at this table so players return to lobby
                 db_clear_table_seats($this->pdo, $tableId);
             
+                // Get board and players from state snapshot (for first-hand all-ins)
+                $stateSnapshot = isset($result['state']) ? $result['state'] : $gameService->getSnapshot();
+                $board = $stateSnapshot['board'] ?? [];
+                $players = $stateSnapshot['players'] ?? [];
+            
+                // Extract player cards for match end (all cards should be revealed)
+                $playerData = [];
+                foreach ($players as $seat => $p) {
+                    $playerData[$seat] = [
+                        'seat'         => $seat,
+                        'user_id'      => $p['user_id'] ?? 0,
+                        'cards'        => $p['cards'] ?? [],
+                        'folded'       => $p['folded'] ?? false,
+                        'stack'        => $p['stack'] ?? 0,
+                        'bet'          => $p['bet'] ?? 0,
+                    ];
+                }
+            
                 // Broadcast final match result
                 $this->broadcast($tableId, [
                     'event'  => 'match_end',
                     'winner' => $winner,
                     'loser'  => $loser,
+                    'reason' => $reason, // Include reason (forfeit/fold/showdown)
+                    'board'  => $board,  // Include board for first-hand all-ins
+                    'players' => $playerData, // Include player cards for first-hand all-ins
                 ]);
+
+                // ======================================================================
+                // NEW: Immediately update presence for BOTH players after match ends
+                // ======================================================================
+                try {
+                    if (isset($this->userConnections[$tableId])) {
+                        foreach ($this->userConnections[$tableId] as $uid => $conns) {
+                            // Determine username from first connection
+                            $username = null;
+                            if (!empty($conns)) {
+                                $rid = $conns[0]->resourceId;
+                                $username = $this->connInfo[$rid]['username'] ?? null;
+                            }
+
+                            // Update DB presence → back to online
+                            db_upsert_presence($this->pdo, $uid, $username, 'online');
+
+                            // Notify lobby instantly
+                            if ($this->lobbySocket !== null) {
+                                $this->lobbySocket->broadcastPresenceUpdate($uid, $username, 'online');
+                            }
+
+                            error_log("[GameSocket] Presence updated to ONLINE after match_end for user {$uid}");
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    error_log("[GameSocket] Failed to update presence on match_end: " . $e->getMessage());
+                }
+
+                // ======================================================================
+                // NEW: Clear pending disconnect timers for this table
+                // ======================================================================
+                unset($this->pendingDisconnects[$tableId]);
+                unset($this->lastSeen[$tableId]);
             
                 // Clear in-memory game mapping for this table
                 unset(
@@ -518,6 +581,7 @@ final class GameSocket implements MessageComponentInterface
             if (($result['matchEnded'] ?? false) === true) {
                 $winner = $result['winner'] ?? null;
                 $loser  = $result['loser']  ?? null;
+                $reason = $result['reason'] ?? null;
                 
                 // Validate winner/loser data before proceeding
                 if (!$winner || !$loser) {
@@ -537,12 +601,58 @@ final class GameSocket implements MessageComponentInterface
                 // Remove table seats (people leave table)
                 db_clear_table_seats($this->pdo, $tableId);
     
+                // Get board and players from state snapshot (for first-hand all-ins)
+                $stateSnapshot = isset($result['state']) ? $result['state'] : $gameService->getSnapshot();
+                $board = $stateSnapshot['board'] ?? [];
+                $players = $stateSnapshot['players'] ?? [];
+    
+                // Extract player cards for match end (all cards should be revealed)
+                $playerData = [];
+                foreach ($players as $seat => $p) {
+                    $playerData[$seat] = [
+                        'seat'         => $seat,
+                        'user_id'      => $p['user_id'] ?? 0,
+                        'cards'        => $p['cards'] ?? [],
+                        'folded'       => $p['folded'] ?? false,
+                        'stack'        => $p['stack'] ?? 0,
+                        'bet'          => $p['bet'] ?? 0,
+                    ];
+                }
+    
                 // Broadcast final result
                 $this->broadcast($tableId, [
                     'event'  => 'match_end',
                     'winner' => $winner,
                     'loser'  => $loser,
+                    'reason' => $reason, // Include reason (forfeit/fold/showdown)
+                    'board'  => $board,  // Include board for first-hand all-ins
+                    'players' => $playerData, // Include player cards for first-hand all-ins
                 ]);
+
+                $unameWinner = $winner['username'] ?? ("User#" . $winner['user_id']);
+                $unameLoser  = $loser['username']  ?? ("User#" . $loser['user_id']);
+
+                try {
+                    if ($this->lobbySocket !== null) {
+                        $this->lobbySocket->broadcastPresenceUpdate(
+                            (int)$winner['user_id'],
+                            $unameWinner,
+                            'online'
+                        );
+
+                        $this->lobbySocket->broadcastPresenceUpdate(
+                            (int)$loser['user_id'],
+                            $unameLoser,
+                            'online'
+                        );
+                    }
+
+                    db_upsert_presence($this->pdo, (int)$winner['user_id'], $unameWinner, 'online');
+                    db_upsert_presence($this->pdo, (int)$loser['user_id'],  $unameLoser,  'online');
+
+                } catch (\Throwable $e) {
+                    error_log("[GameSocket] Presence update failed after match_end in handleNextHand: " . $e->getMessage());
+                }
     
                 // Clear in-memory game mapping for this table
                 unset(
@@ -1251,6 +1361,7 @@ final class GameSocket implements MessageComponentInterface
         if (($result['matchEnded'] ?? false) === true) {
             $winner = $result['winner'] ?? null;
             $loser  = $result['loser']  ?? null;
+            $reason = $result['reason'] ?? null;
             
             // Validate winner/loser data before proceeding
             if (!$winner || !$loser) {
@@ -1263,11 +1374,32 @@ final class GameSocket implements MessageComponentInterface
             // Remove table seats
             db_clear_table_seats($this->pdo, $tableId);
     
+            // Get board and players from state snapshot (for first-hand all-ins)
+            $stateSnapshot = isset($result['state']) ? $result['state'] : $svc->getSnapshot();
+            $board = $stateSnapshot['board'] ?? [];
+            $players = $stateSnapshot['players'] ?? [];
+    
+            // Extract player cards for match end (all cards should be revealed)
+            $playerData = [];
+            foreach ($players as $seat => $p) {
+                $playerData[$seat] = [
+                    'seat'         => $seat,
+                    'user_id'      => $p['user_id'] ?? 0,
+                    'cards'        => $p['cards'] ?? [],
+                    'folded'       => $p['folded'] ?? false,
+                    'stack'        => $p['stack'] ?? 0,
+                    'bet'          => $p['bet'] ?? 0,
+                ];
+            }
+    
             // Broadcast match end
             $this->broadcast($tableId, [
                 'event'  => 'match_end',
                 'winner' => $winner,
                 'loser'  => $loser,
+                'reason' => $reason, // Include reason (forfeit/fold/showdown)
+                'board'  => $board,  // Include board for first-hand all-ins
+                'players' => $playerData, // Include player cards for first-hand all-ins
             ]);
     
             // Clear in-memory game mapping for this table

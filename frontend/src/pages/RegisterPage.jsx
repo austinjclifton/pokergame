@@ -1,10 +1,11 @@
 // src/pages/RegisterPage.jsx
 // -----------------------------------------------------------------------------
 // Registration page for PokerGame.
-// Wraps RegisterForm and handles redirect after successful registration.
+// Wraps RegisterForm and redirects to login after successful registration.
 //
-// The backend (PHP) automatically creates a session and cookie after
-// registration, so we can immediately navigate to /lobby.
+// The backend creates the session cookie after registration, so the user is
+// immediately authenticated. The login page will display a success banner when
+// redirected with ?registered=1.
 // -----------------------------------------------------------------------------
 
 import React from "react";
@@ -15,13 +16,12 @@ import "../styles/login.css";
 export default function RegisterPage() {
   const navigate = useNavigate();
 
-  // Handle callback from RegisterForm when registration succeeds
-  const handleRegister = (data) => {
-
-    // Optional: show a quick success message, then redirect
+  // Called when RegisterForm completes registration successfully
+  const handleRegister = () => {
+    // Redirect to login with success flag → banner displayed in LoginPage
     setTimeout(() => {
-      navigate("/lobby"); // User is already logged in (session cookie set)
-    }, 300);
+      navigate("/login?registered=1");
+    }, 200);
   };
 
   return (

@@ -4,6 +4,7 @@
 @import "./game/gamePage.css";
 @import "./game/tableLayout.css";
 @import "./game/seats.css";
+@import "./game/cardFlip.css";
 @import "./game/communityCards.css";
 @import "./game/actionBar.css";
 @import "./game/chat.css";

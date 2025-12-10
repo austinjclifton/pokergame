@@ -10,7 +10,6 @@ export default function PlayerList({
   setPendingChallenge,
   navigate
 }) {
-
   // --- Authoritative outgoing challenge from server ---
   const getOutgoingChallenge = (playerId) =>
     challenges.find(
@@ -29,11 +28,11 @@ export default function PlayerList({
         c.status === "pending"
     );
 
-  // --- Optimistic outgoing challenge (client-only) ---
+  // --- Optimistic outgoing (client-only) ---
   const isPendingTo = (playerId) =>
     pendingChallenge?.opponent_id === playerId;
 
-  // --- User has ANY outgoing challenge (to ANY player) ---
+  // --- User has ANY outgoing challenge to ANY player ---
   const hasAnyOutgoing =
     pendingChallenge !== null ||
     challenges.some(
@@ -45,7 +44,7 @@ export default function PlayerList({
 
     const target = players.find((p) => p.id === toUserId);
 
-    // Optimistic: temporary pending until server sends challenge_sent
+    // Optimistic pending until server confirms
     setPendingChallenge({
       id: null,
       opponent: target?.username ?? `User#${toUserId}`,
@@ -61,7 +60,6 @@ export default function PlayerList({
   const cancelChallenge = (challengeId) => {
     if (!socketRef.current) return;
 
-    // Immediately clear optimistic state
     setPendingChallenge(null);
 
     socketRef.current.send(
@@ -76,6 +74,7 @@ export default function PlayerList({
     if (navigate && tableId) navigate(`/game/${tableId}`);
   };
 
+  // Current user active table from the broadcasted lobby list
   const currentUserActiveTable =
     players.find((p) => p.id === user.id)?.active_table_id ?? null;
 
@@ -90,20 +89,34 @@ export default function PlayerList({
             const incoming = hasIncomingChallenge(p.id);
             const outgoing = getOutgoingChallenge(p.id);
             const pendingToPlayer = isPendingTo(p.id);
+
             const playerActiveTable = p.active_table_id ?? null;
+
+            // NEW: also treat presence "in_game" as busy, even if table_id hasn't synced yet
+            const isInGameStatus = p.status === "in_game";
 
             const bothInSameGame =
               currentUserActiveTable &&
               playerActiveTable &&
               currentUserActiveTable === playerActiveTable;
 
-            // --- Self row: no button ever ---
+            // NEW RULE: target is busy if they have an active table OR are marked in_game
+            const targetPlayerBusy =
+              playerActiveTable !== null || isInGameStatus;
+
+            // --- Self row ---
             if (isSelf) {
               return (
                 <li key={p.id} className="player-item">
                   <span>
                     {p.username}
-                    <span style={{ color: "#aaa", fontSize: "0.9em", marginLeft: 5 }}>
+                    <span
+                      style={{
+                        color: "#aaa",
+                        fontSize: "0.9em",
+                        marginLeft: 5
+                      }}
+                    >
                       (you)
                     </span>
                   </span>
@@ -118,19 +131,32 @@ export default function PlayerList({
             let onClick = () => sendChallenge(p.id);
             let disabled = false;
 
+            // #1 — Same table → Join table
             if (bothInSameGame) {
               buttonText = "Join Table";
               buttonClass = "join-button";
               buttonTitle = `Rejoin table #${playerActiveTable}`;
               onClick = () => handleJoin(playerActiveTable);
+
+            // #2 — Player is in a game (by seat or status) → cannot be challenged
+            } else if (targetPlayerBusy) {
+              buttonText = "In Game";
+              disabled = true;
+              buttonTitle = "This player is already in a match.";
+
+            // #3 — Incoming challenge from them
             } else if (incoming) {
               buttonText = "Challenged You";
               disabled = true;
+
+            // #4 — Outgoing or optimistic pending
             } else if (outgoing || pendingToPlayer) {
               buttonText = "Cancel";
               buttonClass = "cancel-button";
               const challengeId = outgoing?.id || pendingChallenge?.id;
               onClick = () => challengeId && cancelChallenge(challengeId);
+
+            // #5 — You have ANY outgoing challenge → cannot challenge others
             } else if (hasAnyOutgoing) {
               buttonTitle = "You already have a pending challenge.";
               disabled = true;

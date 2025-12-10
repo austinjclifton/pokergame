@@ -70,13 +70,13 @@ final class GameService
         if ($this->handBootstrapped) {
             $state = $this->persistence->snapshot($this->state);
             return [
-                'ok'        => true,
-                'state'     => $state,
-                'handEnded' => false,
-                'summary'   => null,
+                'ok'         => true,
+                'state'      => $state,
+                'handEnded'  => false,
+                'summary'    => null,
                 'matchEnded' => false,
-                'winner'    => null,
-                'loser'     => null,
+                'winner'     => null,
+                'loser'      => null,
             ];
         }
 
@@ -96,7 +96,7 @@ final class GameService
 
         // Bump version, persist snapshot, and broadcast hand_start event
         if ($this->gameId !== null) {
-            $newVersion = $this->persistence->bumpVersion($this->gameId);
+            $newVersion    = $this->persistence->bumpVersion($this->gameId);
             $this->version = $newVersion;
 
             $stateArr = $this->state->toArray();
@@ -106,8 +106,8 @@ final class GameService
             if (class_exists('GameSocket') && method_exists('GameSocket', 'broadcastByGameId')) {
                 try {
                     GameSocket::broadcastByGameId($this->gameId, [
-                        'type' => 'hand_start',
-                        'state' => $stateArr,
+                        'type'    => 'hand_start',
+                        'state'   => $stateArr,
                         'version' => $newVersion
                     ]);
                 } catch (\Throwable $e) {
@@ -120,13 +120,13 @@ final class GameService
 
         $state = $this->persistence->snapshot($this->state);
         return [
-            'ok'        => true,
-            'state'     => $state,
-            'handEnded' => false,
-            'summary'   => null,
+            'ok'         => true,
+            'state'      => $state,
+            'handEnded'  => false,
+            'summary'    => null,
             'matchEnded' => false,
-            'winner'    => null,
-            'loser'     => null,
+            'winner'     => null,
+            'loser'      => null,
         ];
     }
 
@@ -135,8 +135,17 @@ final class GameService
     // =========================================================================
     public function applyAction(int $seat, string $action, int $amount = 0): array
     {
+        $normalized = strtolower($action);
+
+        // ----------------------------------------------------------
+        // SPECIAL CASE: FORFEIT (match-level, not a betting action)
+        // ----------------------------------------------------------
+        if ($normalized === 'forfeit') {
+            return $this->handleForfeit($seat);
+        }
+
         try {
-            $a = ActionType::from(strtolower($action));
+            $a = ActionType::from($normalized);
         } catch (\ValueError) {
             return ['ok' => false, 'message' => 'Invalid action'];
         }
@@ -161,13 +170,13 @@ final class GameService
             }
 
             return [
-                'ok'        => true,
-                'state'     => $state,
-                'handEnded' => true,
-                'summary'   => $summary,
+                'ok'         => true,
+                'state'      => $state,
+                'handEnded'  => true,
+                'summary'    => $summary,
                 'matchEnded' => false,
-                'winner'    => null,
-                'loser'     => null,
+                'winner'     => null,
+                'loser'      => null,
             ];
         }
 
@@ -189,13 +198,13 @@ final class GameService
             }
 
             return [
-                'ok'        => true,
-                'state'     => $state,
-                'handEnded' => true,
-                'summary'   => $summary,
+                'ok'         => true,
+                'state'      => $state,
+                'handEnded'  => true,
+                'summary'    => $summary,
                 'matchEnded' => false,
-                'winner'    => null,
-                'loser'     => null,
+                'winner'     => null,
+                'loser'      => null,
             ];
         }
 
@@ -203,13 +212,13 @@ final class GameService
         $state = $this->persistence->snapshot($this->state);
 
         return [
-            'ok'        => true,
-            'state'     => $state,
-            'handEnded' => false,
-            'summary'   => null,
+            'ok'         => true,
+            'state'      => $state,
+            'handEnded'  => false,
+            'summary'    => null,
             'matchEnded' => false,
-            'winner'    => null,
-            'loser'     => null,
+            'winner'     => null,
+            'loser'      => null,
         ];
     }
 
@@ -239,6 +248,91 @@ final class GameService
             $this->state->lastRaiseAmount,
             $this->state->players
         );
+    }
+
+    // =========================================================================
+    // FORFEIT HANDLER (MATCH-LEVEL)
+    // =========================================================================
+    private function handleForfeit(int $seat): array
+    {
+        if (!isset($this->state->players[$seat])) {
+            return ['ok' => false, 'message' => 'Invalid seat'];
+        }
+
+        // Heads-up: find opponent seat
+        $forfeiterSeat = $seat;
+        $forfeiter     = $this->state->players[$forfeiterSeat];
+
+        $opponentSeat = null;
+        $opponent     = null;
+        foreach ($this->state->players as $s => $p) {
+            if ($s !== $forfeiterSeat) {
+                $opponentSeat = $s;
+                $opponent     = $p;
+                break;
+            }
+        }
+
+        // If somehow no opponent, just treat as trivial match end
+        if ($opponent === null) {
+            return [
+                'ok'         => true,
+                'state'      => $this->persistence->snapshot($this->state),
+                'handEnded'  => false,
+                'summary'    => null,
+                'matchEnded' => true,
+                'winner'     => [
+                    'seat'    => $forfeiterSeat,
+                    'user_id' => $forfeiter->user_id,
+                    'stack'   => $forfeiter->stack,
+                ],
+                'loser'      => null,
+                'reason'     => 'forfeit',
+            ];
+        }
+
+        // Award all remaining chips + pot to opponent
+        $totalAward = $this->state->pot + $forfeiter->stack;
+
+        if ($totalAward > 0) {
+            $opponent->stack += $totalAward;
+        }
+
+        // Forfeiter is now effectively "busted"
+        $forfeiter->stack = 0;
+
+        // Clear any outstanding pot/bets
+        $this->state->resetPot();
+
+        // No hand is considered active anymore
+        $this->handBootstrapped = false;
+
+        // Reuse normal match-end detection to build winner/loser structure
+        $matchEnd = $this->detectMatchEnd();
+        if ($matchEnd !== null) {
+            $matchEnd['reason'] = 'forfeit';
+            return $matchEnd;
+        }
+
+        // Fallback (should not be hit if heads-up and logic is consistent)
+        return [
+            'ok'         => true,
+            'state'      => $this->persistence->snapshot($this->state),
+            'handEnded'  => false,
+            'summary'    => null,
+            'matchEnded' => true,
+            'winner'     => [
+                'seat'    => $opponentSeat,
+                'user_id' => $opponent->user_id,
+                'stack'   => $opponent->stack,
+            ],
+            'loser'      => [
+                'seat'    => $forfeiterSeat,
+                'user_id' => $forfeiter->user_id,
+                'stack'   => $forfeiter->stack,
+            ],
+            'reason'     => 'forfeit',
+        ];
     }
 
     // =========================================================================
@@ -283,17 +377,17 @@ final class GameService
 
         // FINAL match-end object - normalized structure
         return [
-            'ok'        => true,
-            'state'     => $this->persistence->snapshot($this->state),
-            'handEnded' => false,
-            'summary'   => null,
+            'ok'         => true,
+            'state'      => $this->persistence->snapshot($this->state),
+            'handEnded'  => false,
+            'summary'    => null,
             'matchEnded' => true,
-            'winner' => [
+            'winner'     => [
                 'seat'    => $winnerSeat,
                 'user_id' => $winner->user_id,
                 'stack'   => $winner->stack,
             ],
-            'loser' => [
+            'loser'      => [
                 'seat'    => $loserSeat,
                 'user_id' => $loser->user_id,
                 'stack'   => $loser->stack,
@@ -322,12 +416,13 @@ final class GameService
         $players = [];
         foreach ($this->state->players as $seat => $p) {
             $players[$seat] = [
-                'seat'   => $seat,
-                'user_id'=> $p->user_id,
-                'cards'  => $p->cards,
-                'folded' => $p->folded,
-                'stack'  => $p->stack,
-                'bet'    => $p->bet ?? 0,
+                'seat'         => $seat,
+                'user_id'      => $p->user_id,
+                'cards'        => $p->cards,
+                'folded'       => $p->folded,
+                'stack'        => $p->stack,
+                'bet'          => $p->bet ?? 0,
+                'contribution' => $p->contribution,
             ];
         }
 
@@ -362,9 +457,9 @@ final class GameService
             ];
         }
 
-        $eval  = new HandEvaluator();
-        $calc  = new WinnerCalculator($eval);
-        $wc    = $calc->calculate($input, $this->state->board);
+        $eval = new HandEvaluator();
+        $calc = new WinnerCalculator($eval);
+        $wc   = $calc->calculate($input, $this->state->board);
 
         // Apply payouts
         foreach ($this->state->players as $seat => $p) {
@@ -395,12 +490,13 @@ final class GameService
         $players = [];
         foreach ($this->state->players as $seat => $p) {
             $players[$seat] = [
-                'seat'   => $seat,
-                'user_id'=> $p->user_id,
-                'cards'  => $p->cards,
-                'folded' => $p->folded,
-                'stack'  => $p->stack,
-                'bet'    => $p->bet ?? 0,
+                'seat'         => $seat,
+                'user_id'      => $p->user_id,
+                'cards'        => $p->cards,
+                'folded'       => $p->folded,
+                'stack'        => $p->stack,
+                'bet'          => $p->bet ?? 0,
+                'contribution' => $p->contribution,
             ];
         }
 

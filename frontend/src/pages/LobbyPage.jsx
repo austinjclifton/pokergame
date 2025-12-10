@@ -143,43 +143,64 @@ export default function LobbyPage({ user, onLogout }) {
             return filterRecentMessages(updated);
           });
           break;
-        case "presence": {
-          const id = msg.user?.id;
-          const name = msg.user?.username;
-          if (!id || !name) break;
+          case "presence": {
+            const id = msg.user?.id;
+            const name = msg.user?.username;
+            const status = msg.user?.status || "online";
+            const activeTable = msg.user?.active_table_id || null;
           
-          if (msg.event === "join") {
-            setPlayers((p) => {
-              let updated;
-              // Don't add if already exists
-              if (p.some((x) => x.id === id)) {
-                // Update existing player's info
-                updated = p.map(x => x.id === id ? { ...x, username: name, status: msg.user?.status || "online", active_table_id: msg.user?.active_table_id || null } : x);
-              } else {
-                // Add new player with status and active_table_id
-                updated = [...p, { id, username: name, status: msg.user?.status || "online", active_table_id: msg.user?.active_table_id || null }];
+            if (!id || !name) break;
+          
+            setPlayers((prev) => {
+              let updated = [...prev];
+              const index = updated.findIndex((p) => p.id === id);
+          
+              // === JOIN ===
+              if (msg.event === "join") {
+                if (index === -1) {
+                  updated.push({
+                    id,
+                    username: name,
+                    status,
+                    active_table_id: activeTable,
+                  });
+                } else {
+                  updated[index] = {
+                    ...updated[index],
+                    username: name,
+                    status,
+                    active_table_id: activeTable,
+                  };
+                }
               }
-              
-              // Sort: current user always first, then alphabetically by username
+          
+              // === LEAVE ===
+              if (msg.event === "leave") {
+                updated = updated.filter((p) => p.id !== id);
+              }
+          
+              // === UPDATE (new) ===
+              if (msg.event === "update") {
+                if (index !== -1) {
+                  updated[index] = {
+                    ...updated[index],
+                    username: name,
+                    status,
+                    active_table_id: activeTable,
+                  };
+                }
+              }
+          
+              // Sort: current user first, then alphabetically
               return updated.sort((a, b) => {
                 if (a.id === user?.id) return -1;
                 if (b.id === user?.id) return 1;
                 return a.username.localeCompare(b.username);
               });
             });
-          } else if (msg.event === "leave") {
-            setPlayers((p) => {
-              const filtered = p.filter((x) => x.id !== id);
-              // Re-sort after removing player
-              return filtered.sort((a, b) => {
-                if (a.id === user?.id) return -1;
-                if (b.id === user?.id) return 1;
-                return a.username.localeCompare(b.username);
-              });
-            });
-          }
-          break;
-        }
+          
+            break;
+          }          
         case "challenge":
           fetchChallenges();
           // Show a chat notification

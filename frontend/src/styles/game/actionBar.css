@@ -1,307 +1,335 @@
-/* ========== ACTION BAR ========== */
+/* =============================================================================
+   ACTION BAR CSS
+   ============================================================================= */
 
-.action-bar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  display: flex;
-  flex-direction: column;
-  background: rgba(17, 17, 17, 0.98);
-  backdrop-filter: blur(10px);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  z-index: 100;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
-}
-
-.action-controls {
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.action-controls-content {
-  max-width: 600px;
-  margin: 0 auto;
-}
-
-.action-controls-label {
-  font-size: 0.75rem;
-  color: #888;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 0.5rem;
-  text-align: center;
-}
-
-.action-controls-inputs {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-}
-
-.action-number-input {
-  width: 100px;
-  padding: 0.5rem;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 0.25rem;
-  color: #fff;
-  font-size: 0.875rem;
-  text-align: center;
-}
-
-.action-number-input:focus {
-  outline: none;
-  border-color: #00bcd4;
-  background: rgba(255, 255, 255, 0.15);
-}
-
-.action-slider {
-  flex: 1;
-  height: 6px;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 3px;
-  outline: none;
-  -webkit-appearance: none;
-}
-
-.action-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 18px;
-  height: 18px;
-  background: #00bcd4;
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.action-slider::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  background: #00bcd4;
-  border-radius: 50%;
-  cursor: pointer;
-  border: none;
-}
-
-.action-amount-display {
-  min-width: 80px;
-  text-align: center;
-  font-weight: 600;
-  font-size: 1rem;
-  color: #00bcd4;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  padding: 0.75rem 1rem;
-}
-
-.action-btn {
-  flex: 0 1 auto;
-  min-width: 80px;
-  background: #2a2a2a;
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 0.625rem 1.25rem;
-  cursor: pointer;
-  font-weight: 500;
-  font-size: 0.875rem;
-  transition: all 0.2s ease;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.action-btn.active {
-  background: #00bcd4;
-  color: #111;
-  border-color: #00bcd4;
-  box-shadow: 0 2px 8px rgba(0, 188, 212, 0.3);
-}
-
-.action-btn:hover:not(:disabled) {
-  background: #3a3a3a;
-  border-color: rgba(255, 255, 255, 0.2);
-  transform: translateY(-1px);
-}
-
-.action-btn.active:hover:not(:disabled) {
-  background: #00acc1;
-  border-color: #00acc1;
-  box-shadow: 0 4px 12px rgba(0, 188, 212, 0.4);
-}
-
-.action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  transform: none;
-}
-
-.action-btn:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-.action-check-call {
-  background: #333;
-}
-
-.action-bet-raise {
-  background: #333;
-}
-
-.action-fold {
-  background: #333;
-}
-
-.action-allin {
-  background: #333;
-}
-
-.action-check {
-  background: #333;
-}
-
-.action-call {
-  background: #333;
-}
-
-/* Prominent Call button - larger and more visible */
-.action-call-primary {
-  background: #00bcd4;
-  color: #111;
-  font-weight: 600;
-  font-size: 1rem;
-  padding: 0.75rem 1.5rem;
-  min-width: 140px;
-  box-shadow: 0 2px 8px rgba(0, 188, 212, 0.3);
-  border: 2px solid #00bcd4;
-}
-
-.action-call-primary:hover:not(:disabled) {
-  background: #00acc1;
-  border-color: #00acc1;
-  box-shadow: 0 4px 12px rgba(0, 188, 212, 0.4);
-  transform: translateY(-1px);
-}
-
-.action-call-primary:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 2px 6px rgba(0, 188, 212, 0.3);
-}
-
-.action-bet {
-  background: #333;
-}
-
-.action-raise {
-  background: #333;
-}
-
-.action-fold {
-  background: #333;
-}
-
-.action-allin {
-  background: #333;
-}
-
-.action-chat {
-  background: #333;
-  position: relative;
-}
-
-.chat-notification-badge {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  background: #ef5350;
-  color: #fff;
-  border-radius: 10px;
-  min-width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.7rem;
-  font-weight: 600;
-  padding: 0 4px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-  border: 2px solid #2a2a2a;
-}
-
-.action-bet-group,
-.action-raise-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 180px;
-}
-
-.bet-slider {
-  width: 100%;
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.1);
-  outline: none;
-  -webkit-appearance: none;
-  cursor: pointer;
-}
-
-.bet-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #00bcd4;
-  cursor: pointer;
-  transition: transform 0.2s ease;
-}
-
-.bet-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.1);
-}
-
-.bet-slider::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #00bcd4;
-  cursor: pointer;
-  border: none;
-  transition: transform 0.2s ease;
-}
-
-.bet-slider::-moz-range-thumb:hover {
-  transform: scale(1.1);
-}
-
-.bet-amount-display {
-  font-size: 1rem;
-  font-weight: 600;
-  color: #00bcd4;
-}
-
-.waiting-message-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.waiting-message {
-  text-align: center;
-  padding: 1rem;
-  color: #888;
-  font-style: italic;
-  font-size: 0.875rem;
-}
-
+/* ============================================================================
+   CONTAINER
+   ============================================================================ */
+   .action-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+  
+    display: flex;
+    flex-direction: column;
+  
+    background: rgba(17, 17, 17, 0.98);
+    backdrop-filter: blur(10px);
+  
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  
+    z-index: 100;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.35);
+  }
+  
+  /* ============================================================================
+     SLIDER AREA
+     ============================================================================ */
+  .action-controls {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  
+  .action-controls-content {
+    max-width: 600px;
+    margin: 0 auto;
+  }
+  
+  .action-controls-label {
+    font-size: 0.75rem;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+    text-align: center;
+  }
+  
+  .action-controls-inputs {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+  }
+  
+  .action-slider {
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+    outline: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+  }
+  
+  .action-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: #00bcd4;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.15s ease;
+  }
+  
+  .action-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+  }
+  
+  .action-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: #00bcd4;
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+    transition: transform 0.15s ease;
+  }
+  
+  .action-slider::-moz-range-thumb:hover {
+    transform: scale(1.1);
+  }
+  
+  .action-amount-display {
+    min-width: 80px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    color: #00bcd4;
+  }
+  
+  
+  /* ============================================================================
+     BUTTON BAR
+     ============================================================================ */
+  .action-buttons {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    justify-content: center;
+  
+    width: 100%;
+    padding: 0.75rem 1rem;
+  }
+  
+  
+  /* ============================================================================
+     BASE BUTTON
+     ============================================================================ */
+  .action-btn {
+    min-width: 80px;
+    height: 40px;
+  
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  
+    padding: 0.625rem 1.25rem;
+  
+    background: #2a2a2a;
+    color: #fff;
+  
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+  
+    cursor: pointer;
+  
+    font-weight: 500;
+    font-size: 0.875rem;
+  
+    transition: all 0.18s ease;
+  }
+  
+  .action-btn:hover:not(:disabled) {
+    background: #3a3a3a;
+    transform: translateY(-1px);
+  }
+  
+  .action-btn:active:not(:disabled) {
+    transform: translateY(0);
+  }
+  
+  .action-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+  }
+  
+  /* Active state (bet/raise when slider is open) */
+  .action-btn.active {
+    background: #00bcd4;
+    color: #111;
+    border-color: #00bcd4;
+    box-shadow: 0 2px 8px rgba(0, 188, 212, 0.35);
+  }
+  
+  
+  /* ============================================================================
+     BUTTON VARIANTS
+     ============================================================================ */
+  .action-check-call,
+  .action-bet-raise,
+  .action-fold {
+    background: #333;
+  }
+  
+  /* Forfeit Button — Always shown */
+  .action-forfeit {
+    background: #c62828; /* brighter, modern red */
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  
+  .action-forfeit:hover:not(:disabled) {
+    background: #b71c1c;
+    box-shadow: 0 2px 10px rgba(183, 28, 28, 0.4);
+  }
+  
+  
+  /* ============================================================================
+     CHAT BUTTON + BADGE
+     ============================================================================ */
+  .action-chat {
+    position: relative;
+    background: #4169e1;     /* royal blue */
+    color: #fff;             /* white text */
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  
+  .action-chat:hover:not(:disabled) {
+    background: #3651c7;
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateY(-1px);
+  }
+  
+  .action-chat.active {
+    background: #2d44a8; /* darker royal blue when open */
+  }
+  
+  .chat-notification-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+  
+    min-width: 18px;
+    height: 18px;
+  
+    padding: 0 4px;
+  
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  
+    background: #ef5350;
+    color: #fff;
+  
+    font-size: 0.7rem;
+    font-weight: 700;
+  
+    border-radius: 999px;
+    border: 2px solid #2a2a2a;
+  
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  }
+  
+  
+  /* ============================================================================
+     FORFEIT CONFIRMATION MODAL
+     ============================================================================ */
+  .forfeit-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+  
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+  
+    z-index: 9999;
+  }
+  
+  .forfeit-modal {
+    width: 300px;
+    max-width: 90vw;
+  
+    padding: 20px 26px;
+  
+    background: #1e1e1e;
+    color: #fff;
+  
+    border-radius: 10px;
+    text-align: center;
+  
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+  
+    animation: fadeInModal 0.18s ease-out;
+  }
+  
+  .forfeit-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin-bottom: 12px;
+  }
+  
+  .forfeit-body {
+    font-size: 0.95rem;
+    margin-bottom: 20px;
+    color: #ccc;
+  }
+  
+  .forfeit-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  
+  .forfeit-btn {
+    flex: 1;
+    padding: 0.65rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+  
+    border-radius: 6px;
+    cursor: pointer;
+  
+    border: none;
+    transition: all 0.15s ease;
+  }
+  
+  .forfeit-btn.cancel {
+    background: #555;
+    color: #eee;
+  }
+  
+  .forfeit-btn.cancel:hover {
+    background: #666;
+  }
+  
+  .forfeit-btn.confirm {
+    background: #8b0000;
+    color: #fff;
+  }
+  
+  .forfeit-btn.confirm:hover {
+    background: #a40000;
+  }
+  
+  
+  /* ============================================================================
+     ANIMATIONS
+     ============================================================================ */
+  @keyframes fadeInModal {
+    from {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  

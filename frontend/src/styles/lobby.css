@@ -1,4 +1,7 @@
-/* ========== LOBBY PAGE ========== */
+/* ========================================================================== */
+/*  LOBBY PAGE LAYOUT                                                         */
+/* ========================================================================== */
+
 .lobby-page {
   max-width: 700px;
   margin: 60px auto;
@@ -12,7 +15,10 @@
   margin-bottom: 20px;
 }
 
-/* Header Row */
+/* -------------------------------------------------------------------------- */
+/*  HEADER                                                                    */
+/* -------------------------------------------------------------------------- */
+
 .lobby-header {
   display: flex;
   justify-content: space-between;
@@ -20,6 +26,7 @@
   margin-bottom: 25px;
 }
 
+/* Left cluster: user counts, username, etc. */
 .header-left {
   display: flex;
   flex-direction: column;
@@ -27,6 +34,7 @@
   gap: 10px;
 }
 
+/* Online user breakdown */
 .user-counts {
   display: flex;
   gap: 15px;
@@ -48,12 +56,14 @@
   color: #fff;
 }
 
+/* Right cluster: logout, challenge panel button */
 .header-buttons {
   display: flex;
   gap: 10px;
   align-items: center;
 }
 
+/* Logout button */
 .logout-button {
   background-color: #c0392b;
   color: white;
@@ -67,6 +77,7 @@
   opacity: 0.9;
 }
 
+/* Open challenges panel */
 .challenges-button {
   background-color: #f39c12;
   color: white;
@@ -80,7 +91,10 @@
   opacity: 0.9;
 }
 
-/* Main Lobby Container */
+/* -------------------------------------------------------------------------- */
+/*  MAIN LOBBY CONTAINER                                                      */
+/* -------------------------------------------------------------------------- */
+
 .lobby-container {
   border-radius: 10px;
   padding: 20px;
@@ -88,7 +102,10 @@
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
 }
 
-/* Player List */
+/* ========================================================================== */
+/*  PLAYER LIST                                                               */
+/* ========================================================================== */
+
 .player-list {
   list-style: none;
   padding: 0;
@@ -115,6 +132,11 @@
   gap: 6px;
 }
 
+/* -------------------------------------------------------------------------- */
+/*  BUTTONS: CHALLENGE / CANCEL / JOIN / ETC.                                */
+/* -------------------------------------------------------------------------- */
+
+/* Default challenge button */
 .challenge-button {
   background-color: #124e78;
   color: white;
@@ -124,15 +146,18 @@
   cursor: pointer;
   font-weight: bold;
 }
+
 .challenge-button:hover:not(:disabled) {
   opacity: 0.9;
 }
+
 .challenge-button:disabled {
   background-color: #7f8c8d;
   opacity: 0.6;
   cursor: not-allowed;
 }
 
+/* Displayed when someone has already challenged the user */
 .challenged-button {
   background-color: #7f8c8d;
   color: white;
@@ -144,6 +169,7 @@
   opacity: 0.6;
 }
 
+/* Join table button */
 .join-button {
   background-color: #28a745;
   color: white;
@@ -165,6 +191,7 @@
   opacity: 0.6;
 }
 
+/* Cancel outgoing challenge */
 .cancel-button {
   background-color: #e74c3c;
   color: white;
@@ -174,11 +201,13 @@
   cursor: pointer;
   font-weight: bold;
 }
+
 .cancel-button:hover {
   opacity: 0.9;
   background-color: #c0392b;
 }
 
+/* Pending response button (read-only) */
 .pending-button {
   background-color: #f39c12;
   color: white;
@@ -190,7 +219,10 @@
   opacity: 0.8;
 }
 
-/* ========== CHAT BOX ========== */
+/* ========================================================================== */
+/*  CHAT BOX                                                                  */
+/* ========================================================================== */
+
 .chat-box {
   margin-top: 25px;
   background: rgba(255, 255, 255, 0.05);
@@ -262,7 +294,10 @@
   opacity: 0.9;
 }
 
-/* ========== CHALLENGES PANEL ========== */
+/* ========================================================================== */
+/*  CHALLENGES PANEL                                                          */
+/* ========================================================================== */
+
 .challenges-panel {
   margin-bottom: 25px;
   background: rgba(255, 255, 255, 0.05);
@@ -313,6 +348,7 @@
   gap: 8px;
 }
 
+/* Accept challenge */
 .accept-button {
   background-color: #27ae60;
   color: white;
@@ -327,10 +363,12 @@
 .player-actions .accept-button {
   font-size: 0.9rem;
 }
+
 .accept-button:hover {
   opacity: 0.9;
 }
 
+/* Decline challenge */
 .decline-button {
   background-color: #e74c3c;
   color: white;
@@ -341,6 +379,7 @@
   font-weight: bold;
   font-size: 0.8rem;
 }
+
 .decline-button:hover {
   opacity: 0.9;
 }

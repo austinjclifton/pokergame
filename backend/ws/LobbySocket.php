@@ -782,6 +782,23 @@ class LobbySocket implements MessageComponentInterface
         }
     }
 
+    /**
+     * Public method to broadcast presence updates from GameSocket.
+     * Called when a user's presence status changes (e.g., goes in_game).
+     */
+    public function broadcastPresenceUpdate(int $userId, string $username, string $status): void
+    {
+        $this->broadcast([
+            'type'  => 'presence',
+            'event' => 'update',
+            'user'  => [
+                'id'       => $userId,
+                'username' => escape_html($username),
+                'status'   => $status
+            ]
+        ]);
+    }
+
     /** Broadcast JSON to all connected lobby clients except the excluded connection. */
     private function broadcastExcept(ConnectionInterface $except, array $data): void
     {

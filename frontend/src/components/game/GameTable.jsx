@@ -80,7 +80,7 @@ export default function GameTable({ state, currentUser }) {
       {/* ----------------- BOARD ----------------- */}
       <div className="center-board-area">
         <PotDisplay pot={pot} pots={pots} />
-        <CommunityCards cards={community} />
+        <CommunityCards cards={community} phase={state.phase} />
       </div>
 
       {/* ----------------- HAND RESULT OVERLAY ----------------- */}

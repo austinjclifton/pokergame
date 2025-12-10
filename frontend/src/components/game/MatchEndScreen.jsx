@@ -1,53 +1,113 @@
 // frontend/src/components/game/MatchEndScreen.jsx
+// -----------------------------------------------------------------------------
+// MatchEndScreen
+// -----------------------------------------------------------------------------
+// Displays final match results for:
+//   • showdown – board + both players’ cards
+//   • fold     – board + winner’s cards only
+//   • forfeit  – NO CARDS SHOWN AT ALL, clean informational screen
+//
+// This component defensively sanitizes card data for forfeit events to avoid
+// stale data leaking from previous hands.
+// -----------------------------------------------------------------------------
+
 import React from "react";
 import Card from "../cards/Card";
 import { parseCard } from "../../utils/cardParser";
 import "../../styles/game.css";
 
-/**
- * MatchEndScreen
- * Final match summary with card display.
- *
- * Props:
- *  - winner: { username, seat, stack }
- *  - loser: { username, seat, stack }
- *  - finalHand: full hand summary from useGameSocket.matchResult.finalHand
- */
 export default function MatchEndScreen({ winner, loser, finalHand }) {
-  if (!winner) return null;
+  if (!winner) return null; // Prevent rendering before server snapshot arrives
 
-  const board = finalHand?.board || [];
-  const players = finalHand?.players || {};
-  const winners = finalHand?.winners || [];
-  const reason = finalHand?.reason || "showdown";
+  // --- Extract raw data -------------------------------------------------------
+  const rawBoard   = finalHand?.board   || [];
+  const rawPlayers = finalHand?.players || {};
+  const rawWinners = finalHand?.winners || [];
+  const reason     = finalHand?.reason  || "showdown";
 
-  // winner seat
-  const winningSeat = winners[0] ? Number(winners[0].seat) : null;
+  // --- Match flags ------------------------------------------------------------
+  const isForfeit = reason === "forfeit";
+  const isFold    = reason === "fold";
+  const isShowdown = reason === "showdown";
 
-  // best hand card set (used for highlighting)
+  // Losing cards appear *only* during showdown
+  const showLosingCards = isShowdown;
+
+  // Hand description suppressed for forfeit
+  const handDescription = isForfeit ? null : finalHand?.handDescription;
+
+  // --- Forfeit Safety Guard ---------------------------------------------------
+  // Never trust backend card data on forfeit. Wipe everything that could show cards.
+  const safeBoard   = isForfeit ? [] : rawBoard;
+  const safePlayers = isForfeit ? {} : rawPlayers;
+  const safeWinners = isForfeit ? [] : rawWinners;
+
+  // --- Highlighting support ---------------------------------------------------
+  const winningSeat =
+    safeWinners.length > 0 ? Number(safeWinners[0].seat) : null;
+
   const bestHandsBySeat = new Map(
-    winners
+    safeWinners
       .filter((w) => Array.isArray(w.bestHand))
       .map((w) => [Number(w.seat), new Set(w.bestHand)])
   );
 
-  // Helper: get player hole cards based on seat
-  const getHole = (seat) => players?.[seat]?.cards || [];
+  // Helper: retrieve hole cards for a seat
+  const getHoleCards = (seat) => safePlayers?.[seat]?.cards || [];
 
-  // If fold, hide losing player's cards
-  const showLosingCards = reason !== "fold";
+  // ============================================================================
+  // FORFEIT MODE
+  // ============================================================================
+  if (isForfeit) {
+    return (
+      <div className="match-end-screen">
+        <div className="match-end-card">
+          <h1>Game Over</h1>
 
+          {/* Winner */}
+          <div className="match-end-section">
+            <h2>Winner</h2>
+            <p>{winner.username || `Player ${winner.seat}`}</p>
+            <p>Final Stack: ${winner.stack?.toLocaleString()}</p>
+            <div className="hand-result-hand-description">Wins by forfeit</div>
+          </div>
+
+          {/* Loser */}
+          {loser && (
+            <div className="match-end-section">
+              <h2>Loser</h2>
+              <p>{loser.username || `Player ${loser.seat}`}</p>
+              <p>Final Stack: ${loser.stack?.toLocaleString()}</p>
+              <div className="hand-result-hand-description">Forfeited</div>
+            </div>
+          )}
+
+          {/* Return */}
+          <button
+            className="return-lobby-btn"
+            onClick={() => (window.location.href = "/lobby")}
+          >
+            Return to Lobby
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // SHOWDOWN / FOLD MODE (May show cards depending on reason)
+  // ============================================================================
   return (
     <div className="match-end-screen">
       <div className="match-end-card">
         <h1>Game Over</h1>
 
         {/* ===================== FINAL BOARD ===================== */}
-        {board.length === 5 && (
+        {safeBoard.length > 0 && (
           <div className="match-end-section">
             <h2>Final Board</h2>
             <div className="hand-result-cards">
-              {board.map((cardStr, idx) => {
+              {safeBoard.map((cardStr, idx) => {
                 const card = parseCard(cardStr);
                 if (!card) return null;
 
@@ -77,9 +137,9 @@ export default function MatchEndScreen({ winner, loser, finalHand }) {
           <p>{winner.username || `Player ${winner.seat}`}</p>
           <p>Final Stack: ${winner.stack?.toLocaleString()}</p>
 
-          {/* Winner's hole cards */}
+          {/* Winner Cards */}
           <div className="hand-result-cards">
-            {getHole(winner.seat)?.map((cardStr, idx) => {
+            {getHoleCards(winner.seat).map((cardStr, idx) => {
               const card = parseCard(cardStr);
               if (!card) return null;
 
@@ -101,10 +161,10 @@ export default function MatchEndScreen({ winner, loser, finalHand }) {
             })}
           </div>
 
-          {/* Winner's hand description */}
-          {finalHand?.handDescription && (
+          {/* Winning Hand Description (only on showdown) */}
+          {handDescription && (
             <div className="hand-result-hand-description">
-              Winning Hand: {finalHand.handDescription}
+              Winning Hand: {handDescription}
             </div>
           )}
         </div>
@@ -116,10 +176,10 @@ export default function MatchEndScreen({ winner, loser, finalHand }) {
             <p>{loser.username || `Player ${loser.seat}`}</p>
             <p>Final Stack: ${loser.stack?.toLocaleString()}</p>
 
-            {/* Loser's hole cards (only show on showdown) */}
+            {/* Loser Cards: only shown during showdown */}
             {showLosingCards && (
               <div className="hand-result-cards">
-                {getHole(loser.seat)?.map((cardStr, idx) => {
+                {getHoleCards(loser.seat).map((cardStr, idx) => {
                   const card = parseCard(cardStr);
                   if (!card) return null;
 
@@ -134,11 +194,7 @@ export default function MatchEndScreen({ winner, loser, finalHand }) {
                       }`}
                     >
                       <div className="hand-result-card">
-                        <Card
-                          suit={card.suit}
-                          rank={card.rank}
-                          revealed={true}
-                        />
+                        <Card suit={card.suit} rank={card.rank} revealed={true} />
                       </div>
                     </div>
                   );
@@ -146,7 +202,8 @@ export default function MatchEndScreen({ winner, loser, finalHand }) {
               </div>
             )}
 
-            {reason === "fold" && (
+            {/* Fold message */}
+            {isFold && (
               <div className="hand-result-hand-description">Folded</div>
             )}
           </div>

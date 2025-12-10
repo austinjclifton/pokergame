@@ -1,0 +1,60 @@
+/* ========== SHARED CARD FLIP ANIMATION ========== */
+/* Used by both community cards and hole cards */
+
+.flip-card {
+  perspective: 1000px;
+  width: 100px;
+  height: 150px;
+  flex-shrink: 0;
+}
+
+.flip-card .card-flip-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-style: preserve-3d;
+}
+
+.flip-card.revealed .card-flip-inner {
+  transform: rotateY(180deg);
+}
+
+.flip-card .card-flip-front,
+.flip-card .card-flip-back {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flip-card .card-flip-front {
+  transform: rotateY(0deg);
+}
+
+.flip-card .card-flip-back {
+  transform: rotateY(180deg);
+}
+
+.flip-card .card-back-wrapper {
+  display: inline-block;
+  width: 100px;
+  height: 150px;
+  flex-shrink: 0;
+}
+
+.flip-card .card-flip-front svg,
+.flip-card .card-flip-back svg {
+  margin: 0 !important;
+  width: 100px !important;
+  height: 150px !important;
+  flex-shrink: 0;
+  display: block;
+}
+

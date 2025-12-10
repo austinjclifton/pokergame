@@ -56,9 +56,7 @@ export default function GamePage({ user }) {
   // ---------------------------------------------------------
   const [error, setError] = useState(null);
   const [revealCards, setRevealCards] = useState(false);
-  const [showChat, setShowChat] = useState(false);
-  const [unreadChatCount, setUnreadChatCount] = useState(0);
-  const lastMessageCountRef = useRef(0);
+  const [isFlipping, setIsFlipping] = useState(false);
 
   // ---------------------------------------------------------
   // WebSocket + Game State
@@ -69,6 +67,7 @@ export default function GamePage({ user }) {
     sendChat,
     requestSync,
     disconnect,
+    toggleChat,
     connected,
     reconnecting,
   } = useGameSocket(
@@ -78,26 +77,6 @@ export default function GamePage({ user }) {
   );
 
   const messagesEndRef = useRef(null);
-
-  // ---------------------------------------------------------
-  // Unread Chat Tracking
-  // ---------------------------------------------------------
-  useEffect(() => {
-    const messageCount = (gameState.chatMessages || []).length;
-
-    if (!showChat && messageCount > lastMessageCountRef.current) {
-      setUnreadChatCount(
-        (unread) => unread + (messageCount - lastMessageCountRef.current)
-      );
-    }
-
-    lastMessageCountRef.current = messageCount;
-  }, [gameState.chatMessages, showChat]);
-
-  // Reset unread count when opening chat
-  useEffect(() => {
-    if (showChat) setUnreadChatCount(0);
-  }, [showChat]);
 
   // ---------------------------------------------------------
   // Navigation Guard (missing tableId)
@@ -179,11 +158,13 @@ export default function GamePage({ user }) {
     );
   }
 
-  if (connected && !gameState.showSummary && gameState.matchEnd) {
+  if (connected && !gameState.showSummary && (gameState.matchEnd || gameState.matchResult)) {
+    const matchData = gameState.matchEnd || gameState.matchResult;
     return (
       <MatchEndScreen
-        winner={gameState.matchEnd.winner}
-        loser={gameState.matchEnd.loser}
+        winner={matchData.winner}
+        loser={matchData.loser}
+        finalHand={matchData.finalHand}
       />
     );
   }
@@ -261,18 +242,21 @@ export default function GamePage({ user }) {
                     if (!card) return null;
 
                     return (
-                      <div key={idx} className="hole-card">
-                        {revealCards ? (
-                          <Card
-                            suit={card.suit}
-                            rank={card.rank}
-                            revealed={true}
-                          />
-                        ) : (
-                          <div className="card-back-wrapper">
-                            <CardBack />
+                      <div key={idx} className={`flip-card ${isFlipping ? 'flipping' : ''} ${revealCards ? 'revealed' : ''}`}>
+                        <div className="card-flip-inner">
+                          <div className="card-flip-front">
+                            <div className="card-back-wrapper">
+                              <CardBack />
+                            </div>
                           </div>
-                        )}
+                          <div className="card-flip-back">
+                            <Card
+                              suit={card.suit}
+                              rank={card.rank}
+                              revealed={true}
+                            />
+                          </div>
+                        </div>
                       </div>
                     );
                   })}
@@ -280,7 +264,14 @@ export default function GamePage({ user }) {
 
                 <button
                   className="flip-cards-btn"
-                  onClick={() => setRevealCards((prev) => !prev)}
+                  onClick={() => {
+                    if (!isFlipping) {
+                      setIsFlipping(true);
+                      setRevealCards((prev) => !prev);
+                      setTimeout(() => setIsFlipping(false), 400);
+                    }
+                  }}
+                  disabled={isFlipping}
                 >
                   {revealCards ? "Hide Cards" : "Show Cards"}
                 </button>
@@ -302,15 +293,15 @@ export default function GamePage({ user }) {
 
               onAction={handleAction}
               disabled={!connected || !isMyTurn || gameState.showSummary}
-              showChat={showChat}
-              onToggleChat={() => setShowChat((prev) => !prev)}
+              showChat={gameState.showChat}
+              onToggleChat={toggleChat}
               isMyTurn={isMyTurn}
-              unreadChatCount={unreadChatCount}
+              unreadChatCount={gameState.unreadChatCount}
             />
           )}
 
           {/* -------------------- Chat Panel -------------------- */}
-          {showChat && (
+          {gameState.showChat && (
             <GameChatBox
               messages={gameState.chatMessages || []}
               sendChat={sendChat}

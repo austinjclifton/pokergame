@@ -83,15 +83,7 @@
     gap: 10px;
   }
   
-  /* ============================================================================
-     CARD SIZE REDUCTION
-     ============================================================================ */
-  .card-scale-small .card,
-  .card-scale-small .card-container {
-    transform: scale(0.72);
-    transform-origin: center;
-    margin: 0 -8px; /* tighten spacing after scale */
-  }
+  /* Cards use standard size (100px x 150px) - consistent with all other cards */
   
   /* ============================================================================
      BUTTON
