@@ -1,19 +1,24 @@
 // src/config/api.js
-// -----------------------------------------------------------------------------
-// Centralized API + WebSocket configuration with automatic environment detection
-// -----------------------------------------------------------------------------
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const envApi = import.meta.env.VITE_API_BASE_URL;
+const envWs = import.meta.env.VITE_WS_BASE_URL;
 
-const IS_LOCAL =
-  API_BASE_URL.includes("localhost") || API_BASE_URL.includes("127.0.0.1");
+const isBrowser = typeof window !== "undefined";
+const origin = isBrowser ? window.location.origin : "";
+const host = isBrowser ? window.location.host : "";
 
-// LOCAL → ws://localhost:8080
-// VM    → wss://pokergame.webdev.gccis.rit.edu/ws (from env)
-const WS_BASE_URL = IS_LOCAL
-  ? "ws://localhost:8080"
-  : import.meta.env.VITE_WS_BASE_URL; // e.g. wss://pokergame.webdev.gccis.rit.edu/ws
+// In production: same-origin (https://pokergame.studio)
+// In local dev: can still override with VITE_API_BASE_URL
+const rawApi = envApi || origin || "http://localhost:8000";
+const API_BASE_URL = rawApi.replace(/\/+$/, "").replace(/\/api$/, "");
+
+// In production: wss://pokergame.studio/ws
+// In local dev: ws://localhost:8080 unless overridden
+const WS_BASE_URL =
+  envWs ||
+  (isBrowser
+    ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${host}/ws`
+    : "ws://localhost:8080");
 
 export const API = {
   baseURL: API_BASE_URL,
@@ -35,6 +40,7 @@ export const API = {
   },
 
   ws: {
+    // If your Ratchet server expects /lobby and /game paths, keep this:
     lobby: (token) => `${WS_BASE_URL}/lobby?token=${token}`,
     game: (tableId, token) =>
       `${WS_BASE_URL}/game?table_id=${tableId}&token=${token}`,

@@ -29,7 +29,21 @@ $IS_LOCAL =
 // ---------------------------------------------------------------
 // Assign DB credentials
 // ---------------------------------------------------------------
-if ($IS_LOCAL) {
+
+// If env vars are present, ALWAYS prefer them (critical for DO + supervisor)
+$envHost = getenv('DB_HOST');
+$envName = getenv('DB_NAME');
+$envUser = getenv('DB_USER');
+$envPass = getenv('DB_PASS');
+
+$hasEnvCreds = ($envUser !== false && $envUser !== '');
+
+if ($hasEnvCreds) {
+    $DB_HOST = ($envHost !== false && $envHost !== '') ? $envHost : '127.0.0.1';
+    $DB_NAME = ($envName !== false && $envName !== '') ? $envName : 'pokergame';
+    $DB_USER = $envUser;
+    $DB_PASS = ($envPass !== false) ? $envPass : '';
+} else if ($IS_LOCAL) {
     // LOCAL (MacBook)
     $DB_HOST = '127.0.0.1';
     $DB_NAME = 'pokergame';
@@ -37,10 +51,10 @@ if ($IS_LOCAL) {
     $DB_PASS = '';  // no password locally
 } else {
     // VM (Apache + WebSocket server)
-    $DB_HOST = getenv('DB_HOST') ?: '127.0.0.1';
-    $DB_NAME = getenv('DB_NAME') ?: 'pokergame';
-    $DB_USER = getenv('DB_USER') ?: 'root';
-    $DB_PASS = getenv('DB_PASS') ?: 'student'; // required on VM
+    $DB_HOST = $envHost ?: '127.0.0.1';
+    $DB_NAME = $envName ?: 'pokergame';
+    $DB_USER = $envUser ?: 'root';
+    $DB_PASS = ($envPass !== false && $envPass !== '') ? $envPass : 'student'; // required on VM
 }
 
 // ---------------------------------------------------------------

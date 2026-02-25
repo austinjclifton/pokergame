@@ -42,7 +42,7 @@ function ws_get_cookie(RequestInterface $req, string $name): ?string
 }
 
 /**
- * Unified WebSocket authentication for local + VM
+ * Unified WebSocket authentication
  */
 function ws_auth(PDO $pdo, RequestInterface $req): ?array
 {
@@ -78,33 +78,17 @@ function ws_auth(PDO $pdo, RequestInterface $req): ?array
     return null;
 }
 
-// -----------------------------------------------------------
-// Environment detection
-// -----------------------------------------------------------
-
-// Local if: CLI / localhost / 127.0.0.1
-
-// VM-safe environment detection
-$hostname = trim(shell_exec('hostname'));
-$IS_LOCAL = (
-    str_contains($hostname, 'local') ||
-    str_contains($hostname, 'MacBook') ||
-    str_contains($hostname, 'mbp') ||
-    str_contains($hostname, 'Mac') ||
-    php_sapi_name() === 'cli-server'
-);
-
-// VM host for HAProxy routing
-$VM_HOST = 'pokergame.webdev.gccis.rit.edu';
+/* ========================================================================== */
+/* Deployment config                                                           */
+/* ========================================================================== */
 
 // Bind host for WebSocket server process
-$WS_HOST = '0.0.0.0';            // Listen everywhere
+$WS_HOST = getenv('WS_HOST') ?: '0.0.0.0';
 $WS_PORT = (int) (getenv('WS_PORT') ?: 8080);
 
-// Host header Ratchet expects
-$APP_HOST = $IS_LOCAL ? 'localhost' : $VM_HOST;
+// Host header Ratchet expects (MUST match your domain in production)
+$APP_HOST = getenv('APP_HOST') ?: 'pokergame.studio';
 
-echo "[WS] Mode: " . ($IS_LOCAL ? "LOCAL" : "VM") . "\n";
 echo "[WS] Listening on {$WS_HOST}:{$WS_PORT}\n";
 echo "[WS] Expecting Host header: {$APP_HOST}\n";
 
@@ -113,14 +97,11 @@ $game = new GameSocket($pdo, $lobby);
 
 echo "[WS] Constructing Ratchet App...\n";
 
-// IMPORTANT:
-//   LOCAL → accept Host: localhost
-//   VM    → accept Host: pokergame.webdev.gccis.rit.edu
 $app = new RatchetApp($APP_HOST, $WS_PORT, $WS_HOST);
 
 echo "[WS] Adding routes...\n";
 
-// Internal routes (HAProxy rewrites /ws/lobby → /lobby on VM)
+// Nginx should proxy /ws/lobby -> /lobby and /ws/game -> /game
 $app->route('/lobby', new AuthenticatedServer($pdo, $lobby, 'lobby'), ['*']);
 $app->route('/game', new AuthenticatedServer($pdo, $game, 'game'), ['*']);
 
