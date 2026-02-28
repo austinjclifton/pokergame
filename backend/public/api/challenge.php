@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__, 2) . '/bootstrap.php';
-require_once __DIR__ . '/../app/services/ChallengeService.php';
+require_once __DIR__ . '/../../app/services/ChallengeService.php';
 
 // Apply rate limiting (100 requests/minute per IP)
 apply_rate_limiting(null, 100, 200, 60);
