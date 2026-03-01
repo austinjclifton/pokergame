@@ -5,9 +5,9 @@
 require_once dirname(__DIR__, 2) . '/bootstrap.php';
 
 
-// require_once __DIR__ . '/../app/services/AuthService.php';
-// require_once __DIR__ . '/../app/db/challenges.php';
-// require_once __DIR__ . '/../app/db/users.php';
+require_once __DIR__ . '/../app/services/AuthService.php';
+require_once __DIR__ . '/../app/db/challenges.php';
+require_once __DIR__ . '/../app/db/users.php';
 
 // Apply rate limiting (100 requests/minute per IP, 200/minute per user after auth)
 apply_rate_limiting(null, 100, 200, 60);
