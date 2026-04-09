@@ -5,6 +5,11 @@ use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
 use Psr\Http\Message\RequestInterface;
 
+require_once __DIR__ . '/../app/db/nonces.php';
+require_once __DIR__ . '/../app/db/sessions.php';
+require_once __DIR__ . '/../lib/WebSocketLog.php';
+require_once __DIR__ . '/../lib/WebSocketJson.php';
+
 /**
  * AuthenticatedServer
  * -----------------------------------------------------------------------------
@@ -60,7 +65,7 @@ final class AuthenticatedServer implements MessageComponentInterface {
                 'session_id' => (int)$result['session_id'],
             ];
         } catch (Throwable $e) {
-            error_log('[AuthenticatedServer] Token validation error: ' . $e->getMessage());
+            WebSocketLog::error('AuthenticatedServer', 'Token validation failed: ' . $e->getMessage());
             return null;
         }
     }
@@ -80,7 +85,7 @@ final class AuthenticatedServer implements MessageComponentInterface {
                 'session_id' => (int)$session['session_id'],
             ];
         } catch (Throwable $e) {
-            error_log('[AuthenticatedServer] Session validation error: ' . $e->getMessage());
+            WebSocketLog::error('AuthenticatedServer', 'Session validation failed: ' . $e->getMessage());
             return null;
         }
     }
@@ -112,7 +117,7 @@ final class AuthenticatedServer implements MessageComponentInterface {
 
         // 🔒 Require token for all "game" sockets
         if ($this->channelType === 'game') {
-            error_log('[AuthenticatedServer] Missing ws_token for game socket');
+            WebSocketLog::debug('AuthenticatedServer', 'Rejected game socket without ws_token');
             return null;
         }
 
@@ -137,16 +142,14 @@ final class AuthenticatedServer implements MessageComponentInterface {
         try {
             $req = $conn->httpRequest ?? null;
             if (!$req instanceof RequestInterface) {
-                $conn->send(json_encode(['type' => 'error', 'error' => 'unauthorized']));
-                $conn->close();
+                $this->rejectUnauthorized($conn);
                 return;
             }
 
             $userCtx = $this->authenticate($req);
 
             if (!$userCtx) {
-                $conn->send(json_encode(['type' => 'error', 'error' => 'unauthorized']));
-                $conn->close();
+                $this->rejectUnauthorized($conn);
                 return;
             }
 
@@ -159,32 +162,26 @@ final class AuthenticatedServer implements MessageComponentInterface {
                 try {
                     $this->inner->onAuthenticated($conn);
                 } catch (Throwable $e) {
-                    error_log('[AuthenticatedServer] onAuthenticated callback error: ' . $e->getMessage());
+                    WebSocketLog::error('AuthenticatedServer', 'onAuthenticated callback failed: ' . $e->getMessage());
                 }
             }
 
         } catch (Throwable $e) {
-            error_log('[AuthenticatedServer] onOpen error: ' . $e->getMessage());
-            try {
-                $conn->send(json_encode(['type' => 'error', 'error' => 'server_error']));
-            } catch (Throwable) {}
-            try { $conn->close(); } catch (Throwable) {}
+            WebSocketLog::error('AuthenticatedServer', 'onOpen failed: ' . $e->getMessage());
+            $this->sendErrorAndClose($conn, 'server_error');
         }
     }
 
     public function onMessage(ConnectionInterface $from, $msg): void {
         if (!isset($from->userCtx) || !is_array($from->userCtx)) {
-            try {
-                $from->send(json_encode(['type' => 'error', 'error' => 'unauthorized']));
-            } catch (Throwable) {}
-            try { $from->close(); } catch (Throwable) {}
+            $this->rejectUnauthorized($from);
             return;
         }
 
         try {
             $this->inner->onMessage($from, $msg);
         } catch (Throwable $e) {
-            error_log('[AuthenticatedServer] Error forwarding message: ' . $e->getMessage());
+            WebSocketLog::error('AuthenticatedServer', 'Message forwarding failed: ' . $e->getMessage());
         }
     }
 
@@ -193,24 +190,42 @@ final class AuthenticatedServer implements MessageComponentInterface {
             try {
                 $this->inner->onClose($conn);
             } catch (Throwable $e) {
-                error_log('[AuthenticatedServer] onClose error: ' . $e->getMessage());
+                WebSocketLog::warn('AuthenticatedServer', 'onClose forwarding failed: ' . $e->getMessage());
             }
         }
     }
 
     public function onError(ConnectionInterface $conn, \Exception $e): void {
         $userId = $conn->userCtx['user_id'] ?? 'unknown';
-        error_log('[AuthenticatedServer] Transport error for user ' . $userId . ': ' . $e->getMessage());
-        try {
-            $conn->send(json_encode(['type' => 'error', 'error' => 'server_error']));
-        } catch (Throwable) {}
+        WebSocketLog::error('AuthenticatedServer', 'Transport error for user ' . $userId . ': ' . $e->getMessage());
+        $this->sendError($conn, 'server_error');
 
         try {
             $this->inner->onError($conn, $e);
         } catch (Throwable $innerError) {
-            error_log('[AuthenticatedServer] Error forwarding onError: ' . $innerError->getMessage());
+            WebSocketLog::error('AuthenticatedServer', 'onError forwarding failed: ' . $innerError->getMessage());
         }
 
-        try { $conn->close(); } catch (Throwable) {}
+        WebSocketJson::closeQuietly($conn);
+    }
+
+    private function rejectUnauthorized(ConnectionInterface $conn): void {
+        $this->sendErrorAndClose($conn, 'unauthorized');
+    }
+
+    private function sendErrorAndClose(ConnectionInterface $conn, string $error): void {
+        $this->sendError($conn, $error);
+        WebSocketJson::closeQuietly($conn);
+    }
+
+    private function sendError(ConnectionInterface $conn, string $error): bool {
+        return $this->sendJson($conn, ['type' => 'error', 'error' => $error]);
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function sendJson(ConnectionInterface $conn, array $payload): bool {
+        return WebSocketJson::send($conn, $payload, static function (Throwable $e): void {
+            WebSocketLog::warn('AuthenticatedServer', 'Send failed: ' . $e->getMessage());
+        });
     }
 }

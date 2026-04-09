@@ -171,6 +171,44 @@ final class DealerService
     }
 
     /**
+     * Export the full dealer state for snapshot recovery.
+     *
+     * @return array{deck: array<string>, deckIndex: int, seed: ?int}
+     */
+    public function exportState(): array
+    {
+        return [
+            'deck' => $this->deck,
+            'deckIndex' => $this->deckIndex,
+            'seed' => $this->seed,
+        ];
+    }
+
+    /**
+     * @param array{deck?: array<int, string>, deckIndex?: int, seed?: int|null} $state
+     */
+    public function restoreState(array $state): void
+    {
+        $deck = $state['deck'] ?? [];
+        $this->deck = is_array($deck)
+            ? array_values(array_map(static fn($card): string => (string) $card, $deck))
+            : [];
+        $this->deckIndex = max(0, min(count($this->deck), (int) ($state['deckIndex'] ?? 0)));
+        $this->seed = array_key_exists('seed', $state) && $state['seed'] !== null
+            ? (int) $state['seed']
+            : null;
+    }
+
+    public function skipCards(int $count): void
+    {
+        if ($count < 0) {
+            throw new InvalidArgumentException('Cannot skip a negative number of cards');
+        }
+
+        $this->deckIndex = min(count($this->deck), $this->deckIndex + $count);
+    }
+
+    /**
      * Reset deck index (useful for testing)
      * 
      * @return void

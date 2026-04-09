@@ -208,7 +208,8 @@ final class DealerServiceTest extends TestCase
         $dealer = new DealerService();
         $dealer->shuffleDeck();
         
-        $community = ['AS', 'KS', 'QS']; // Existing flop
+        $community = [];
+        $dealer->dealFlop($community);
         $initialCount = count($community);
         
         $dealer->dealTurn($community);
@@ -227,7 +228,9 @@ final class DealerServiceTest extends TestCase
         $dealer = new DealerService();
         $dealer->shuffleDeck();
         
-        $community = ['AS', 'KS', 'QS', 'JS']; // Existing flop + turn
+        $community = [];
+        $dealer->dealFlop($community);
+        $dealer->dealTurn($community);
         $initialCount = count($community);
         
         $dealer->dealRiver($community);

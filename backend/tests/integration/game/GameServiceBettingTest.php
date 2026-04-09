@@ -8,11 +8,11 @@ declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
 
-require_once __DIR__ . '/../helpers/PlayerStateHelpers.php';
-require_once __DIR__ . '/../helpers/GameServiceStateHelpers.php';
-require_once __DIR__ . '/../helpers/GameServiceActionHelpers.php';
-require_once __DIR__ . '/../../app/services/game/GameService.php';
-require_once __DIR__ . '/../../app/services/game/rules/GameTypes.php';
+require_once __DIR__ . '/../../helpers/PlayerStateHelpers.php';
+require_once __DIR__ . '/../../helpers/GameServiceStateHelpers.php';
+require_once __DIR__ . '/../../helpers/GameServiceActionHelpers.php';
+require_once __DIR__ . '/../../../app/services/game/GameService.php';
+require_once __DIR__ . '/../../../app/services/game/rules/GameTypes.php';
 
 final class GameServiceBettingTest extends TestCase
 {
@@ -40,11 +40,7 @@ final class GameServiceBettingTest extends TestCase
         ]);
 
         // Start real hand (legal initial state)
-        $result = $game->startHand([
-            ['seat' => 1, 'stack' => 1000],
-            ['seat' => 2, 'stack' => 1000],
-            ['seat' => 3, 'stack' => 1000],
-        ]);
+        $result = $game->startHand();
         $this->assertTrue($result['ok']);
 
         // Jump directly to FLOP for deterministic testing
@@ -64,10 +60,7 @@ final class GameServiceBettingTest extends TestCase
 
         // Set action seat (first to act: seat left of dealer)
         $actionSeat = $this->getNextActiveSeat($this->getPlayers($game), $this->getDealerSeat($game));
-        $reflection = new \ReflectionClass($game);
-        $prop = $reflection->getProperty('actionSeat');
-        $prop->setAccessible(true);
-        $prop->setValue($game, $actionSeat);
+        $this->forceActionSeat($game, $actionSeat);
 
         // Players all CHECK in turn → valid for checking round
         $this->executeAction($game, $actionSeat, ActionType::CHECK);
@@ -78,21 +71,8 @@ final class GameServiceBettingTest extends TestCase
         $next2 = $this->getNextActiveSeat($this->getPlayers($game), $next);
         $this->executeAction($game, $next2, ActionType::CHECK);
 
-        // All actedThisStreet should be true
-        $this->assertTrue($this->getActedThisStreet($game, 1));
-        $this->assertTrue($this->getActedThisStreet($game, 2));
-        $this->assertTrue($this->getActedThisStreet($game, 3));
-
-        // Now check round completion
-        $activePlayers = $this->getActivePlayers($game);
-        $actionSeatNow = $this->getActionSeat($game);
-        $currentBet = $this->getCurrentBet($game);
-        $lastRaiseSeat = $this->getLastRaiseSeat($game);
-
-        $this->assertTrue(
-            \BettingEngine::isBettingRoundComplete($activePlayers, $actionSeatNow, $currentBet, $lastRaiseSeat),
-            'Betting round should be complete after all players check'
-        );
+        $this->assertEquals(Phase::TURN, $this->getPhase($game), 'Completing the flop round should advance to the turn');
+        $this->assertEquals(0, $this->getCurrentBet($game), 'The next street should start with no live bet');
     }
 
     /**
@@ -112,11 +92,7 @@ final class GameServiceBettingTest extends TestCase
             ['seat' => 3, 'stack' => 1000],
         ]);
 
-        $game->startHand([
-            ['seat' => 1, 'stack' => 50],
-            ['seat' => 2, 'stack' => 1000],
-            ['seat' => 3, 'stack' => 1000],
-        ]);
+        $game->startHand();
 
         //
         // Force flop the same way as scenario 6,
@@ -141,25 +117,22 @@ final class GameServiceBettingTest extends TestCase
         $this->forceActedThisStreet($game, [1 => false, 2 => false, 3 => false]);
         $this->forceLastRaiseAmount($game, 0);
 
-        // Seat 2 first to act
         $first = $this->getNextActiveSeat($players, $this->getDealerSeat($game));
-        $this->executeAction($game, $first, ActionType::CALL);
-
-        $second = $this->getNextActiveSeat($players, $first);
-        $this->executeAction($game, $second, ActionType::CALL);
-
-        // BettingEngine should consider betting complete
-        $activePlayers = $this->getActivePlayers($game);
-        $currentBet = $this->getCurrentBet($game);
-        $actionSeat = $this->getActionSeat($game);
-        $lastRaiseSeat = $this->getLastRaiseSeat($game);
+        $this->forceActionSeat($game, $first);
+        $this->forceBets($game, [1 => 50, 2 => 50, 3 => 50]);
+        $this->forceActedThisStreet($game, [1 => false, 2 => true, 3 => true]);
 
         $this->assertTrue(
-            \BettingEngine::isBettingRoundComplete($activePlayers, $actionSeat, $currentBet, $lastRaiseSeat),
-            'Betting round should complete even when an all-in player is present'
+            \BettingEngine::isBettingRoundComplete(
+                $this->getActivePlayers($game),
+                $this->getActionSeat($game),
+                $this->getCurrentBet($game),
+                $this->getLastRaiseSeat($game)
+            ),
+            'Betting round should be complete even when an all-in player is present'
         );
 
         // All-in player should *not* be part of active players
-        $this->assertArrayNotHasKey(1, $activePlayers);
+        $this->assertArrayNotHasKey(1, $this->getActivePlayers($game));
     }
 }

@@ -8,11 +8,11 @@ declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
 
-require_once __DIR__ . '/../helpers/PlayerStateHelpers.php';
-require_once __DIR__ . '/../helpers/GameServiceStateHelpers.php';
-require_once __DIR__ . '/../helpers/GameServiceActionHelpers.php';
-require_once __DIR__ . '/../../app/services/game/GameService.php';
-require_once __DIR__ . '/../../app/services/game/rules/GameTypes.php';
+require_once __DIR__ . '/../../helpers/PlayerStateHelpers.php';
+require_once __DIR__ . '/../../helpers/GameServiceStateHelpers.php';
+require_once __DIR__ . '/../../helpers/GameServiceActionHelpers.php';
+require_once __DIR__ . '/../../../app/services/game/GameService.php';
+require_once __DIR__ . '/../../../app/services/game/rules/GameTypes.php';
 
 final class GameServicePersistenceTest extends TestCase
 {
@@ -40,11 +40,7 @@ final class GameServicePersistenceTest extends TestCase
         ]);
 
         // Start hand (posts blinds, deals cards, rotates dealer)
-        $result = $game1->startHand([
-            ['seat' => 1, 'stack' => 1000],
-            ['seat' => 2, 'stack' => 1000],
-            ['seat' => 3, 'stack' => 1000],
-        ]);
+        $result = $game1->startHand();
         $this->assertTrue($result['ok']);
 
         // Deterministic card state
@@ -83,11 +79,7 @@ final class GameServicePersistenceTest extends TestCase
         ]);
 
         // Start hand with identical seat stacks
-        $result = $game2->startHand([
-            ['seat' => 1, 'stack' => 1000],
-            ['seat' => 2, 'stack' => 1000],
-            ['seat' => 3, 'stack' => 1000],
-        ]);
+        $result = $game2->startHand();
         $this->assertTrue($result['ok']);
 
         // Force identical player hole cards

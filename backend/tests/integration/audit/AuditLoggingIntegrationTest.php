@@ -51,7 +51,7 @@ final class AuditLoggingIntegrationTest extends BaseDBIntegrationTest
 
     private function getAuditLogsByAction(string $action): array
     {
-        return db_query_audit_logs($this->pdo, ['action' => $action]);
+        return db_query_audit_logs($this->pdo, ['action' => $action, 'limit' => 10000]);
     }
 
     private function getLatestAuditLog(): ?array

@@ -37,6 +37,13 @@ final class GameService
     public function getVersion(): int { return $this->version; }
     public function setVersion(int $v): void { $this->version = $v; }
 
+    public function restoreSnapshot(array $state, int $version): void
+    {
+        $this->state->restoreFromArray($state);
+        $this->version = $version;
+        $this->handBootstrapped = true;
+    }
+
     public function getSnapshot(): array
     {
         return $this->state->toArray();
@@ -67,6 +74,13 @@ final class GameService
     // =========================================================================
     public function startHand(?int $seed = null): array
     {
+        if (count($this->state->players) < 2) {
+            return [
+                'ok' => false,
+                'message' => 'At least 2 players are required to start a hand',
+            ];
+        }
+
         if ($this->handBootstrapped) {
             $state = $this->persistence->snapshot($this->state);
             return [
@@ -225,6 +239,42 @@ final class GameService
     public function startNextHand(?int $seed = null): array
     {
         return $this->startHand($seed);
+    }
+
+    public function advancePhaseIfNeeded(): ?array
+    {
+        $evaluator = new HandEvaluator();
+        return PhaseEngine::advance($this->state, $evaluator);
+    }
+
+    public function evaluateWinners(): array
+    {
+        if ($this->state->phase !== Phase::SHOWDOWN) {
+            return [
+                'ok' => false,
+                'message' => 'Hand must be at showdown before winner evaluation',
+            ];
+        }
+
+        $summary = $this->runShowdownSettlement();
+        $this->handBootstrapped = false;
+
+        $winners = array_map(
+            static fn(array $winner): array => [
+                'seat' => (int)$winner['seat'],
+                'amount' => (int)$winner['amount'],
+                'reason' => (string)$winner['handDescription'],
+            ],
+            $summary['winners']
+        );
+
+        return [
+            'ok' => true,
+            'state' => $this->persistence->snapshot($this->state),
+            'summary' => $summary,
+            'winners' => $winners,
+            'handEnded' => true,
+        ];
     }
 
     // =========================================================================
@@ -426,7 +476,7 @@ final class GameService
             ];
         }
 
-        return [
+        $summary = [
             'event'   => 'hand_end',
             'reason'  => 'fold',
             'pot'     => $amount,
@@ -439,6 +489,10 @@ final class GameService
             ]],
             'players' => $players,
         ];
+
+        $this->state->lastHandResult = $summary;
+
+        return $summary;
     }
 
     // =========================================================================
@@ -460,6 +514,16 @@ final class GameService
         $eval = new HandEvaluator();
         $calc = new WinnerCalculator($eval);
         $wc   = $calc->calculate($input, $this->state->board);
+
+        foreach ($wc['handRanks'] as $info) {
+            $seat = (int)$info['seat'];
+            if (!isset($this->state->players[$seat])) {
+                continue;
+            }
+
+            $this->state->players[$seat]->handRank = (int)$info['rank'];
+            $this->state->players[$seat]->handDescription = (string)$info['name'];
+        }
 
         // Apply payouts
         foreach ($this->state->players as $seat => $p) {
@@ -500,7 +564,7 @@ final class GameService
             ];
         }
 
-        return [
+        $summary = [
             'event'   => 'hand_end',
             'reason'  => 'showdown',
             'pot'     => $wc['totalPot'],
@@ -508,5 +572,9 @@ final class GameService
             'winners' => $winners,
             'players' => $players,
         ];
+
+        $this->state->lastHandResult = $summary;
+
+        return $summary;
     }
 }

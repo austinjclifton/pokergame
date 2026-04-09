@@ -75,10 +75,12 @@ function db_unseat_player(PDO $pdo, int $tableId, int $userId): bool
         AND left_at IS NULL
     ");
     
-    return $stmt->execute([
+    $stmt->execute([
         'table_id' => $tableId,
         'user_id' => $userId,
     ]);
+
+    return $stmt->rowCount() > 0;
 }
 
 // -----------------------------------------------------------------------------

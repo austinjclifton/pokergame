@@ -4,8 +4,6 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../bootstrap.php';
 require_once __DIR__ . '/../db/BaseDBIntegrationTest.php';
 
-use PHPUnit\Framework\TestCase;
-
 /**
  * Integration test for hand termination when player folds.
  * 
@@ -16,62 +14,67 @@ use PHPUnit\Framework\TestCase;
  * 
  * @coversNothing
  */
-class GameFoldTerminationTest extends BaseDBIntegrationTest
+final class GameFoldTerminationTest extends BaseDBIntegrationTest
 {
-    public function testFoldEndsHandAndStartsNext(): void
+    protected function loadDatabaseFunctions(): void
     {
-        $this->pdo->beginTransaction();
-        
-        try {
-            // Create two users
-            $user1 = $this->createTestUser('player1', 'p1@example.com', 'password123');
-            $user2 = $this->createTestUser('player2', 'p2@example.com', 'password123');
-            
-            // Create a table
-            require_once __DIR__ . '/../../../app/db/tables.php';
-            $tableId = db_create_table($this->pdo, 'Test Table', 2, 10, 20);
-            $this->assertNotFalse($tableId);
-            
-            // Seat both users
-            require_once __DIR__ . '/../../../app/db/table_seats.php';
-            $this->assertTrue(db_seat_player($this->pdo, $tableId, 1, $user1['id']));
-            $this->assertTrue(db_seat_player($this->pdo, $tableId, 2, $user2['id']));
-            
-            // Create a game
-            require_once __DIR__ . '/../../../app/db/games.php';
-            $gameId = db_create_game($this->pdo, $tableId, 1, 1, 2, 12345);
-            $this->assertNotFalse($gameId);
-            
-            // Create GameService and start hand
-            require_once __DIR__ . '/../../../app/services/game/GameService.php';
-            $gameService = new GameService(10, 20, $this->pdo, $gameId, $tableId);
-            
-            $result = $gameService->startHand([
-                ['seat' => 1, 'stack' => 1000],
-                ['seat' => 2, 'stack' => 1000],
-            ]);
-            
-            $this->assertTrue($result['ok']);
-            
-            // Get initial state
-            $initialState = $gameService->getState();
-            $this->assertGreaterThan(0, $initialState['pot']); // Blinds posted
-            
-            // Player 1 folds
-            $foldResult = $gameService->playerAction(1, \ActionType::FOLD);
-            $this->assertTrue($foldResult['ok']);
-            $this->assertTrue($foldResult['handEnded'] ?? false);
-            
-            // Verify hand ended and pot was awarded
-            $finalState = $gameService->getState();
-            $this->assertEquals(0, $finalState['pot']); // Pot should be 0 (awarded)
-            
-            // Verify a new hand started (phase should be PREFLOP again)
-            $this->assertEquals('preflop', $finalState['phase']);
-            
-        } finally {
-            $this->pdo->rollBack();
-        }
+        require_once __DIR__ . '/../../../app/db/games.php';
+        require_once __DIR__ . '/../../../app/db/table_seats.php';
+        require_once __DIR__ . '/../../../app/db/tables.php';
+        require_once __DIR__ . '/../../../app/db/users.php';
+    }
+
+    public function testFoldEndsHandAndNextHandCanStart(): void
+    {
+        require_once __DIR__ . '/../../../app/services/game/GamePersistence.php';
+        require_once __DIR__ . '/../../../app/services/game/GameService.php';
+        require_once __DIR__ . '/../../../app/services/game/cards/DealerService.php';
+        require_once __DIR__ . '/../../../app/services/game/cards/HandEvaluator.php';
+
+        $userId1 = $this->createTestUser('player1', 'p1@example.com');
+        $userId2 = $this->createTestUser('player2', 'p2@example.com');
+
+        $tableId = (int) db_create_table($this->pdo, 'Test Table', 2, 10, 20, 0);
+        $this->assertGreaterThan(0, $tableId);
+
+        $this->assertTrue(db_seat_player($this->pdo, $tableId, 1, $userId1));
+        $this->assertTrue(db_seat_player($this->pdo, $tableId, 2, $userId2));
+
+        $gameId = (int) db_create_game($this->pdo, $tableId, 1, 1, 2, 12345);
+        $this->assertGreaterThan(0, $gameId);
+
+        $persistence = new GamePersistence($this->pdo, 5);
+        $gameService = new GameService($persistence, 10, 20);
+        $gameService->setGameId($gameId);
+        $gameService->loadPlayers([
+            ['seat' => 1, 'stack' => 1000],
+            ['seat' => 2, 'stack' => 1000],
+        ]);
+
+        $startResult = $gameService->startHand(12345);
+        $this->assertTrue($startResult['ok']);
+        $this->assertGreaterThan(0, $startResult['state']['pot']);
+
+        $actingSeat = (int) $startResult['state']['actionSeat'];
+        $winningSeat = $actingSeat === 1 ? 2 : 1;
+
+        $foldResult = $gameService->applyAction($actingSeat, 'fold');
+        $this->assertTrue($foldResult['ok']);
+        $this->assertTrue($foldResult['handEnded'] ?? false);
+        $this->assertFalse($foldResult['matchEnded'] ?? false);
+
+        $stateAfterFold = $foldResult['state'];
+        $this->assertSame(30, $stateAfterFold['pot']);
+        $this->assertSame(0, $stateAfterFold['currentBet']);
+        $this->assertSame(30, $foldResult['summary']['pot'] ?? null);
+        $this->assertLessThan(1000, $stateAfterFold['players'][$actingSeat]['stack']);
+        $this->assertGreaterThan(1000, $stateAfterFold['players'][$winningSeat]['stack']);
+
+        $nextHandResult = $gameService->startNextHand(12346);
+        $this->assertTrue($nextHandResult['ok']);
+        $this->assertFalse($nextHandResult['handEnded'] ?? false);
+        $this->assertSame('preflop', $nextHandResult['state']['phase']);
+        $this->assertGreaterThan(0, $nextHandResult['state']['pot']);
     }
 }
 

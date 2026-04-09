@@ -34,6 +34,7 @@ try {
 
     $normalized = [
         'id' => (int) $user['user_id'],
+        'user_id' => (int) $user['user_id'],
         'username' => escape_html($user['username']),
         'email' => $user['email'] ?? null,
         'session_id' => $user['session_id'] ?? null,

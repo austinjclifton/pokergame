@@ -8,12 +8,12 @@ declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
 
-require_once __DIR__ . '/../helpers/PlayerStateHelpers.php';
-require_once __DIR__ . '/../helpers/GameServiceStateHelpers.php';
-require_once __DIR__ . '/../helpers/GameServiceActionHelpers.php';
-require_once __DIR__ . '/../../app/services/game/GameService.php';
-require_once __DIR__ . '/../../app/services/game/rules/GameTypes.php';
-require_once __DIR__ . '/../../app/services/game/cards/HandEvaluator.php';
+require_once __DIR__ . '/../../helpers/PlayerStateHelpers.php';
+require_once __DIR__ . '/../../helpers/GameServiceStateHelpers.php';
+require_once __DIR__ . '/../../helpers/GameServiceActionHelpers.php';
+require_once __DIR__ . '/../../../app/services/game/GameService.php';
+require_once __DIR__ . '/../../../app/services/game/rules/GameTypes.php';
+require_once __DIR__ . '/../../../app/services/game/cards/HandEvaluator.php';
 
 final class GameServiceShowdownTest extends TestCase
 {
@@ -39,11 +39,7 @@ final class GameServiceShowdownTest extends TestCase
         ]);
 
         // Start the hand
-        $result = $game->startHand([
-            ['seat' => 1, 'stack' => 100],
-            ['seat' => 2, 'stack' => 1000],
-            ['seat' => 3, 'stack' => 1000],
-        ]);
+        $result = $game->startHand();
         $this->assertTrue($result['ok']);
 
         //
@@ -53,26 +49,7 @@ final class GameServiceShowdownTest extends TestCase
         $this->forceCards($game, 2, ['AD', 'KD']);
         $this->forceCards($game, 3, ['AC', 'KC']);
 
-        //
-        // Player 1 goes all-in for 100
-        //
-        $this->executeAction($game, 1, ActionType::RAISE, 100);
-
-        //
-        // Player 2 CALLS 100
-        //
-        $this->executeAction($game, 2, ActionType::CALL);
-
-        //
-        // Player 3 CALLS 100
-        //
-        $this->executeAction($game, 3, ActionType::CALL);
-
-        //
-        // Betting complete → advance to flop
-        //
-        $this->completeBettingRound($game);
-        $game->advancePhaseIfNeeded();
+        $this->forceTotalInvested($game, [1 => 100, 2 => 100, 3 => 100]);
 
         //
         // Force deterministic board for showdown
@@ -87,7 +64,9 @@ final class GameServiceShowdownTest extends TestCase
         //
         // Now evaluate winners
         //
-        $winners = $game->evaluateWinners();
+        $result = $game->evaluateWinners();
+        $this->assertTrue($result['ok']);
+        $winners = $result['winners'];
 
         $this->assertNotEmpty($winners);
         $this->assertEquals(300, array_sum(array_column($winners, 'amount')));
@@ -108,11 +87,7 @@ final class GameServiceShowdownTest extends TestCase
         ]);
 
         // Start hand
-        $result = $game->startHand([
-            ['seat' => 1, 'stack' => 1000],
-            ['seat' => 2, 'stack' => 1000],
-            ['seat' => 3, 'stack' => 1000],
-        ]);
+        $result = $game->startHand();
         $this->assertTrue($result['ok']);
 
         //
@@ -122,27 +97,21 @@ final class GameServiceShowdownTest extends TestCase
         $this->forceCards($game, 2, ['AD', 'KD']);
         $this->forceCards($game, 3, ['AC', 'KC']);
 
-        //
-        // All players CALL 100 (simulate equal action)
-        //
-        $this->executeAction($game, 1, ActionType::RAISE, 100);
-        $this->executeAction($game, 2, ActionType::CALL);
-        $this->executeAction($game, 3, ActionType::CALL);
-
-        $this->completeBettingRound($game);
-        $game->advancePhaseIfNeeded();
+        $this->forceTotalInvested($game, [1 => 100, 2 => 100, 3 => 100]);
 
         //
         // Force deterministic board that creates a TIE
         //
-        $this->forceBoard($game, ['AH', 'KH', 'QS', 'JS', '10S']);
+        $this->forceBoard($game, ['QH', 'JD', '10C', '2S', '3D']);
 
         $this->forcePhase($game, Phase::SHOWDOWN);
 
         //
         // Evaluate winners
         //
-        $winners = $game->evaluateWinners();
+        $result = $game->evaluateWinners();
+        $this->assertTrue($result['ok']);
+        $winners = $result['winners'];
 
         $this->assertCount(3, $winners); // 3-way tie
         $this->assertEquals(300, array_sum(array_column($winners, 'amount')));

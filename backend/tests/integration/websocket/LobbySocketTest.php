@@ -2,8 +2,8 @@
 declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
-use PHPUnit\Framework\MockObject\MockObject;
 use Ratchet\ConnectionInterface;
+require_once __DIR__ . '/../../helpers/WebSocketTestDoubles.php';
 
 /**
  * Unit tests for LobbySocket WebSocket handler functionality.
@@ -25,30 +25,6 @@ use Ratchet\ConnectionInterface;
  *
  * @coversNothing
  */
-/**
- * Test double for ConnectionInterface to capture sent messages
- */
-class TestConnection implements \Ratchet\ConnectionInterface
-{
-    public $resourceId;
-    public $userCtx;
-    public array $sentMessages = [];
-    public bool $isClosed = false;
-    
-    public function send($data): void
-    {
-        if ($this->isClosed) {
-            throw new \RuntimeException('Cannot send message on closed connection');
-        }
-        $this->sentMessages[] = $data;
-    }
-    
-    public function close(): void
-    {
-        $this->isClosed = true;
-    }
-}
-
 final class LobbySocketTest extends TestCase
 {
     private PDO $pdo;
@@ -180,18 +156,17 @@ final class LobbySocketTest extends TestCase
      */
     private function createMockConnection(int $resourceId, int $userId, int $sessionId): array
     {
-        $conn = new TestConnection();
-        $conn->resourceId = $resourceId;
-        $conn->userCtx = [
+        $conn = new WebSocketTestConnection($resourceId, null, [
             'user_id' => $userId,
             'session_id' => $sessionId,
-        ];
-        
-        return [
-            'conn' => $conn, 
-            'sentMessages' => &$conn->sentMessages,
-            'isClosed' => &$conn->isClosed
-        ];
+        ]);
+
+        return ['conn' => $conn];
+    }
+
+    private function createAnonymousConnection(int $resourceId): WebSocketTestConnection
+    {
+        return new WebSocketTestConnection($resourceId);
     }
     
     /**
@@ -213,17 +188,17 @@ final class LobbySocketTest extends TestCase
 
     public function testOnOpenRejectsConnectionWithoutUserCtx(): void
     {
-        $conn = $this->createMock(ConnectionInterface::class);
-        $conn->resourceId = 1;
-        // No userCtx
-        
-        $conn->expects($this->once())->method('send')->with($this->callback(function ($msg) {
-            $data = json_decode($msg, true);
-            return isset($data['type']) && $data['type'] === 'error' && isset($data['error']) && $data['error'] === 'unauthorized';
-        }));
-        $conn->expects($this->once())->method('close');
-        
+        $conn = $this->createAnonymousConnection(1);
+
         $this->lobbySocket->onOpen($conn);
+
+        $this->assertTrue($conn->isClosed);
+        $this->assertCount(1, $conn->sentMessages);
+
+        $data = json_decode($conn->sentMessages[0], true);
+        $this->assertIsArray($data);
+        $this->assertSame('error', $data['type'] ?? null);
+        $this->assertSame('unauthorized', $data['error'] ?? null);
     }
 
     public function testOnOpenAcceptsValidConnection(): void
@@ -237,7 +212,7 @@ final class LobbySocketTest extends TestCase
         // Access sentMessages directly from the connection object to avoid reference issues
         $sentMessages = &$conn->sentMessages;
         
-        // TestConnection is a real object, not a mock, so we check state directly
+        // WebSocketTestConnection is a real object, not a mock, so we check state directly
         $this->lobbySocket->onOpen($conn);
         
         // Verify connection wasn't closed
@@ -426,8 +401,8 @@ final class LobbySocketTest extends TestCase
         $session2Id = $this->createTestSession($user2Id);
         $user1Username = $this->getUsernameFromDb($user1Id);
         
-        ['conn' => $conn1, 'sentMessages' => &$sentMessages1] = $this->createMockConnection(1, $user1Id, $session1Id);
-        ['conn' => $conn2, 'sentMessages' => &$sentMessages2] = $this->createMockConnection(2, $user2Id, $session2Id);
+        ['conn' => $conn1] = $this->createMockConnection(1, $user1Id, $session1Id);
+        ['conn' => $conn2] = $this->createMockConnection(2, $user2Id, $session2Id);
         
         $this->lobbySocket->onOpen($conn1);
         $this->lobbySocket->onOpen($conn2);
@@ -493,7 +468,7 @@ final class LobbySocketTest extends TestCase
     {
         $userId = $this->createTestUser('emptychat');
         $sessionId = $this->createTestSession($userId);
-        ['conn' => $conn, 'sentMessages' => &$sentMessages] = $this->createMockConnection(1, $userId, $sessionId);
+        ['conn' => $conn] = $this->createMockConnection(1, $userId, $sessionId);
         
         $this->lobbySocket->onOpen($conn);
         $conn->sentMessages = [];
@@ -550,7 +525,7 @@ final class LobbySocketTest extends TestCase
         
         $user1Username = $this->getUsernameFromDb($user1Id);
         ['conn' => $conn1] = $this->createMockConnection(1, $user1Id, $session1Id);
-        ['conn' => $conn2, 'sentMessages' => &$sentMessages2] = $this->createMockConnection(2, $user2Id, $session2Id);
+        ['conn' => $conn2] = $this->createMockConnection(2, $user2Id, $session2Id);
         
         $this->lobbySocket->onOpen($conn1);
         $this->lobbySocket->onOpen($conn2);
@@ -605,7 +580,7 @@ final class LobbySocketTest extends TestCase
         
         $user1Username = $this->getUsernameFromDb($user1Id);
         ['conn' => $conn1] = $this->createMockConnection(1, $user1Id, $session1Id);
-        ['conn' => $conn2, 'sentMessages' => &$sentMessages2] = $this->createMockConnection(2, $user2Id, $session2Id);
+        ['conn' => $conn2] = $this->createMockConnection(2, $user2Id, $session2Id);
         
         $this->lobbySocket->onOpen($conn1);
         $this->lobbySocket->onOpen($conn2);
@@ -643,7 +618,7 @@ final class LobbySocketTest extends TestCase
         
         $user1Username = $this->getUsernameFromDb($user1Id);
         ['conn' => $conn1] = $this->createMockConnection(1, $user1Id, $session1Id);
-        ['conn' => $conn2, 'sentMessages' => &$sentMessages2] = $this->createMockConnection(2, $user2Id, $session2Id);
+        ['conn' => $conn2] = $this->createMockConnection(2, $user2Id, $session2Id);
         
         // Connect user2 first (to receive join message)
         $this->lobbySocket->onOpen($conn2);
@@ -681,7 +656,7 @@ final class LobbySocketTest extends TestCase
         
         $user1Username = $this->getUsernameFromDb($user1Id);
         ['conn' => $conn1] = $this->createMockConnection(1, $user1Id, $session1Id);
-        ['conn' => $conn2, 'sentMessages' => &$sentMessages2] = $this->createMockConnection(2, $user2Id, $session2Id);
+        ['conn' => $conn2] = $this->createMockConnection(2, $user2Id, $session2Id);
         
         // Connect both users
         $this->lobbySocket->onOpen($conn1);
@@ -733,7 +708,7 @@ final class LobbySocketTest extends TestCase
         
         $user1Username = $this->getUsernameFromDb($user1Id);
         ['conn' => $conn1] = $this->createMockConnection(1, $user1Id, $session1Id);
-        ['conn' => $conn2, 'sentMessages' => &$sentMessages2] = $this->createMockConnection(2, $user2Id, $session2Id);
+        ['conn' => $conn2] = $this->createMockConnection(2, $user2Id, $session2Id);
         
         // Connect user2 first
         $this->lobbySocket->onOpen($conn2);
@@ -812,7 +787,7 @@ final class LobbySocketTest extends TestCase
         $session2Id = $this->createTestSession($user2Id);
         
         ['conn' => $conn1] = $this->createMockConnection(1, $user1Id, $session1Id);
-        ['conn' => $conn2, 'sentMessages' => &$sentMessages2] = $this->createMockConnection(2, $user2Id, $session2Id);
+        ['conn' => $conn2] = $this->createMockConnection(2, $user2Id, $session2Id);
         
         $this->lobbySocket->onOpen($conn1);
         $this->lobbySocket->onOpen($conn2);
@@ -963,8 +938,8 @@ final class LobbySocketTest extends TestCase
         
         $user1Username = $this->getUsernameFromDb($user1Id);
         $user2Username = $this->getUsernameFromDb($user2Id);
-        ['conn' => $conn1, 'sentMessages' => &$sentMessages1] = $this->createMockConnection(1, $user1Id, $session1Id);
-        ['conn' => $conn2, 'sentMessages' => &$sentMessages2] = $this->createMockConnection(2, $user2Id, $session2Id);
+        ['conn' => $conn1] = $this->createMockConnection(1, $user1Id, $session1Id);
+        ['conn' => $conn2] = $this->createMockConnection(2, $user2Id, $session2Id);
         
         $this->lobbySocket->onOpen($conn1);
         $this->lobbySocket->onOpen($conn2);
@@ -1038,7 +1013,7 @@ final class LobbySocketTest extends TestCase
     {
         $userId = $this->createTestUser('challenger2');
         $sessionId = $this->createTestSession($userId);
-        ['conn' => $conn, 'sentMessages' => &$sentMessages] = $this->createMockConnection(1, $userId, $sessionId);
+        ['conn' => $conn] = $this->createMockConnection(1, $userId, $sessionId);
         
         $this->lobbySocket->onOpen($conn);
         $conn->sentMessages = [];
@@ -1127,17 +1102,17 @@ final class LobbySocketTest extends TestCase
 
     public function testOnMessageRejectsMessageWithoutUserCtx(): void
     {
-        $conn = $this->createMock(ConnectionInterface::class);
-        $conn->resourceId = 1;
-        // No userCtx
-        
-        $conn->expects($this->once())->method('send')->with($this->callback(function ($msg) {
-            $data = json_decode($msg, true);
-            return isset($data['type']) && $data['type'] === 'error' && $data['error'] === 'unauthorized';
-        }));
-        $conn->expects($this->once())->method('close');
-        
+        $conn = $this->createAnonymousConnection(1);
+
         $this->lobbySocket->onMessage($conn, '{"type":"chat","msg":"test"}');
+
+        $this->assertTrue($conn->isClosed);
+        $this->assertCount(1, $conn->sentMessages);
+
+        $data = json_decode($conn->sentMessages[0], true);
+        $this->assertIsArray($data);
+        $this->assertSame('error', $data['type'] ?? null);
+        $this->assertSame('unauthorized', $data['error'] ?? null);
     }
 
     public function testOnMessageRejectsInvalidJson(): void
@@ -1167,7 +1142,7 @@ final class LobbySocketTest extends TestCase
     {
         $userId = $this->createTestUser('notype');
         $sessionId = $this->createTestSession($userId);
-        ['conn' => $conn, 'sentMessages' => &$sentMessages] = $this->createMockConnection(1, $userId, $sessionId);
+        ['conn' => $conn] = $this->createMockConnection(1, $userId, $sessionId);
         
         $this->lobbySocket->onOpen($conn);
         $conn->sentMessages = [];
@@ -1190,7 +1165,7 @@ final class LobbySocketTest extends TestCase
     {
         $userId = $this->createTestUser('unknowntype');
         $sessionId = $this->createTestSession($userId);
-        ['conn' => $conn, 'sentMessages' => &$sentMessages] = $this->createMockConnection(1, $userId, $sessionId);
+        ['conn' => $conn] = $this->createMockConnection(1, $userId, $sessionId);
         
         $this->lobbySocket->onOpen($conn);
         $conn->sentMessages = [];
@@ -1310,7 +1285,7 @@ final class LobbySocketTest extends TestCase
         require_once __DIR__ . '/../../../app/db/subscriptions.php';
         $subscriptionsBefore = db_get_user_subscriptions($this->pdo, $userId);
         $this->assertCount(1, $subscriptionsBefore);
-        $this->assertNull($subscriptionsBefore[0]['disconnected_at'], 'Subscription should be active before close');
+        $this->assertSame((string) $conn->resourceId, $subscriptionsBefore[0]['connection_id']);
         
         $this->lobbySocket->onClose($conn);
         
@@ -1345,9 +1320,7 @@ final class LobbySocketTest extends TestCase
 
     public function testOnCloseHandlesGracefullyWhenNoUserCtx(): void
     {
-        $conn = $this->createMock(ConnectionInterface::class);
-        $conn->resourceId = 1;
-        // No userCtx
+        $conn = $this->createAnonymousConnection(1);
         
         // Should not throw exception
         $this->lobbySocket->onClose($conn);
@@ -1361,16 +1334,18 @@ final class LobbySocketTest extends TestCase
 
     public function testOnErrorSendsErrorAndClosesConnection(): void
     {
-        $conn = $this->createMock(ConnectionInterface::class);
+        $conn = $this->createAnonymousConnection(1);
         $exception = new \RuntimeException('Test error');
-        
-        $conn->expects($this->once())->method('send')->with($this->callback(function ($msg) {
-            $data = json_decode($msg, true);
-            return isset($data['type']) && $data['type'] === 'error' && $data['error'] === 'server_error';
-        }));
-        $conn->expects($this->once())->method('close');
-        
+
         $this->lobbySocket->onError($conn, $exception);
+
+        $this->assertTrue($conn->isClosed);
+        $this->assertCount(1, $conn->sentMessages);
+
+        $data = json_decode($conn->sentMessages[0], true);
+        $this->assertIsArray($data);
+        $this->assertSame('error', $data['type'] ?? null);
+        $this->assertSame('server_error', $data['error'] ?? null);
     }
 
     // ============================================================================
@@ -1383,7 +1358,7 @@ final class LobbySocketTest extends TestCase
         $sessionId = $this->createTestSession($userId);
         
         ['conn' => $conn1] = $this->createMockConnection(1, $userId, $sessionId);
-        ['conn' => $conn2, 'sentMessages' => &$sentMessages2] = $this->createMockConnection(2, $userId, $sessionId);
+        ['conn' => $conn2] = $this->createMockConnection(2, $userId, $sessionId);
         
         $this->lobbySocket->onOpen($conn1);
         
@@ -1392,7 +1367,8 @@ final class LobbySocketTest extends TestCase
         
         // When user sends a message, both connections should receive it?
         // Actually, broadcast sends to all clients, so both should receive
-        $sentMessages2 = [];
+        $conn2->sentMessages = [];
+        $sentMessages2 = &$conn2->sentMessages;
         
         $this->lobbySocket->onMessage($conn1, json_encode([
             'type' => 'chat',
@@ -1540,7 +1516,7 @@ final class LobbySocketTest extends TestCase
         $user1Username = $this->getUsernameFromDb($user1Id);
         
         ['conn' => $conn1] = $this->createMockConnection(1, $user1Id, $session1Id);
-        ['conn' => $conn2, 'sentMessages' => &$sentMessages2] = $this->createMockConnection(2, $user2Id, $session2Id);
+        ['conn' => $conn2] = $this->createMockConnection(2, $user2Id, $session2Id);
         
         $this->lobbySocket->onOpen($conn1);
         $this->lobbySocket->onOpen($conn2);

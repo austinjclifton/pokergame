@@ -30,8 +30,8 @@ trait GameServiceActionHelpers
         foreach ($actions as $seat => $actionConfig) {
             $action = $actionConfig['action'];
             $amount = $actionConfig['amount'] ?? 0;
-            
-            $result = $game->playerAction($seat, $action, $amount);
+
+            $result = $game->applyAction($seat, $action->value, $amount);
             
             if (!$result['ok']) {
                 throw new \Exception("Action failed for seat {$seat}: " . ($result['message'] ?? 'Unknown error'));
@@ -50,7 +50,7 @@ trait GameServiceActionHelpers
      */
     protected function executeAction(GameService $game, int $seat, ActionType $action, int $amount = 0): array
     {
-        return $game->playerAction($seat, $action, $amount);
+        return $game->applyAction($seat, $action->value, $amount);
     }
 
     /**
@@ -85,13 +85,15 @@ trait GameServiceActionHelpers
         while ($currentOrder < $targetOrder) {
             // Complete current betting round
             $this->completeBettingRound($game);
-            
-            // Advance to next phase using advancePhaseIfNeeded()
-            // This will automatically advance when betting round is complete
-            $game->advancePhaseIfNeeded();
-            
+
             $newPhase = $this->getPhase($game);
             $newOrder = $phaseOrder[$newPhase->value] ?? -1;
+
+            if ($newOrder === $currentOrder) {
+                $game->advancePhaseIfNeeded();
+                $newPhase = $this->getPhase($game);
+                $newOrder = $phaseOrder[$newPhase->value] ?? -1;
+            }
             
             // If phase didn't advance, something went wrong
             if ($newOrder <= $currentOrder) {
@@ -116,9 +118,10 @@ trait GameServiceActionHelpers
         
         // Complete river betting round
         $this->completeBettingRound($game);
-        
-        // Advance to showdown
-        $game->advancePhaseIfNeeded();
+
+        if ($this->getPhase($game) !== Phase::SHOWDOWN) {
+            $game->advancePhaseIfNeeded();
+        }
     }
 
     /**
@@ -136,9 +139,13 @@ trait GameServiceActionHelpers
         if ($currentPhase !== Phase::SHOWDOWN) {
             $this->dealToShowdown($game);
         }
-        
-        // Evaluate winners if not already done
-        $game->evaluateWinners();
+
+        if ($this->getPhase($game) === Phase::SHOWDOWN && $this->getPot($game) > 0) {
+            $result = $game->evaluateWinners();
+            if (!($result['ok'] ?? false)) {
+                throw new \Exception($result['message'] ?? 'Failed to evaluate winners');
+            }
+        }
     }
 
     /**
@@ -149,10 +156,7 @@ trait GameServiceActionHelpers
      */
     protected function startNextHand(GameService $game): void
     {
-        $reflection = new \ReflectionClass($game);
-        $method = $reflection->getMethod('startNextHand');
-        $method->setAccessible(true);
-        $method->invoke($game);
+        $game->startNextHand();
     }
 
     /**
@@ -185,7 +189,7 @@ trait GameServiceActionHelpers
             }
             
             $action = $actionTypeMap[$actionString];
-            $result = $game->playerAction($seat, $action, $amount);
+            $result = $game->applyAction($seat, $action->value, $amount);
             
             if (!$result['ok']) {
                 throw new \Exception("Replay failed for action: " . ($result['message'] ?? 'Unknown error'));
@@ -330,6 +334,7 @@ trait GameServiceActionHelpers
             $actionSeat = $this->getActionSeat($game);
             $currentBet = $this->getCurrentBet($game);
             $lastRaiseSeat = $this->getLastRaiseSeat($game);
+            $phaseBefore = $this->getPhase($game);
             
             $isComplete = \BettingEngine::isBettingRoundComplete(
                 $activePlayers,
@@ -354,10 +359,14 @@ trait GameServiceActionHelpers
             $callAmount = $currentBet - $player->bet;
             $action = ($callAmount === 0) ? ActionType::CHECK : ActionType::CALL;
             
-            $result = $game->playerAction($actionSeat, $action, 0);
+            $result = $game->applyAction($actionSeat, $action->value, 0);
             
             if (!$result['ok']) {
                 throw new \Exception("Failed to complete betting round: " . ($result['message'] ?? 'Unknown error'));
+            }
+
+            if (($result['handEnded'] ?? false) || $this->getPhase($game) !== $phaseBefore) {
+                return;
             }
             
             $iterations++;

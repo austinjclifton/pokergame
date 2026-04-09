@@ -264,6 +264,9 @@ final class PhaseEngine
 
     private static function onShowdown(GameState $state): array
     {
+        $state->phase = Phase::SHOWDOWN;
+        $state->actionSeat = -1;
+
         // HandEnder determines fold/showdown reason, but does NOT move chips.
         $result = HandEnder::endHand($state);
 

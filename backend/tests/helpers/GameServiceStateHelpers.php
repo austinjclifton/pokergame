@@ -9,10 +9,32 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../app/services/game/GameService.php';
+require_once __DIR__ . '/../../app/services/game/GamePersistence.php';
 require_once __DIR__ . '/../../app/services/game/rules/GameTypes.php';
 
 trait GameServiceStateHelpers
 {
+    private function getGameState(GameService $game): GameState
+    {
+        $reflection = new \ReflectionClass($game);
+        $property = $reflection->getProperty('state');
+        $property->setAccessible(true);
+
+        return $property->getValue($game);
+    }
+
+    private function getGameStateProperty(GameService $game, string $property): mixed
+    {
+        $state = $this->getGameState($game);
+        return $state->{$property};
+    }
+
+    private function setGameStateProperty(GameService $game, string $property, mixed $value): void
+    {
+        $state = $this->getGameState($game);
+        $state->{$property} = $value;
+    }
+
     /**
      * Force set the game phase
      * 
@@ -22,10 +44,7 @@ trait GameServiceStateHelpers
      */
     protected function forcePhase(GameService $game, Phase $phase): void
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('phase');
-        $property->setAccessible(true);
-        $property->setValue($game, $phase);
+        $this->setGameStateProperty($game, 'phase', $phase);
     }
 
     /**
@@ -37,10 +56,7 @@ trait GameServiceStateHelpers
      */
     protected function forceBets(GameService $game, array $bets): void
     {
-        $reflection = new \ReflectionClass($game);
-        $playersProperty = $reflection->getProperty('players');
-        $playersProperty->setAccessible(true);
-        $players = $playersProperty->getValue($game);
+        $players = $this->getPlayers($game);
         
         foreach ($bets as $seat => $bet) {
             if (isset($players[$seat])) {
@@ -58,10 +74,7 @@ trait GameServiceStateHelpers
      */
     protected function forceCurrentBet(GameService $game, int $bet): void
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('currentBet');
-        $property->setAccessible(true);
-        $property->setValue($game, $bet);
+        $this->setGameStateProperty($game, 'currentBet', $bet);
     }
 
     /**
@@ -73,10 +86,7 @@ trait GameServiceStateHelpers
      */
     protected function forceLastRaiseAmount(GameService $game, int $amount): void
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('lastRaiseAmount');
-        $property->setAccessible(true);
-        $property->setValue($game, $amount);
+        $this->setGameStateProperty($game, 'lastRaiseAmount', $amount);
     }
 
     /**
@@ -88,10 +98,7 @@ trait GameServiceStateHelpers
      */
     protected function forceActedThisStreet(GameService $game, array $acted): void
     {
-        $reflection = new \ReflectionClass($game);
-        $playersProperty = $reflection->getProperty('players');
-        $playersProperty->setAccessible(true);
-        $players = $playersProperty->getValue($game);
+        $players = $this->getPlayers($game);
         
         foreach ($acted as $seat => $value) {
             if (isset($players[$seat])) {
@@ -109,14 +116,12 @@ trait GameServiceStateHelpers
      */
     protected function forceTotalInvested(GameService $game, array $investments): void
     {
-        $reflection = new \ReflectionClass($game);
-        $playersProperty = $reflection->getProperty('players');
-        $playersProperty->setAccessible(true);
-        $players = $playersProperty->getValue($game);
+        $players = $this->getPlayers($game);
         
         foreach ($investments as $seat => $amount) {
             if (isset($players[$seat])) {
                 $players[$seat]->totalInvested = (int)$amount;
+                $players[$seat]->contribution = (int)$amount;
             }
         }
     }
@@ -131,10 +136,7 @@ trait GameServiceStateHelpers
      */
     protected function forceCards(GameService $game, int $seat, array $cards): void
     {
-        $reflection = new \ReflectionClass($game);
-        $playersProperty = $reflection->getProperty('players');
-        $playersProperty->setAccessible(true);
-        $players = $playersProperty->getValue($game);
+        $players = $this->getPlayers($game);
         
         if (isset($players[$seat])) {
             $players[$seat]->cards = $cards;
@@ -150,10 +152,28 @@ trait GameServiceStateHelpers
      */
     protected function forceBoard(GameService $game, array $cards): void
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('board');
-        $property->setAccessible(true);
-        $property->setValue($game, $cards);
+        $this->setGameStateProperty($game, 'board', $cards);
+    }
+
+    protected function forcePot(GameService $game, int $amount): void
+    {
+        $this->setGameStateProperty($game, 'pot', $amount);
+    }
+
+    protected function forceDealerSeat(GameService $game, int $seat): void
+    {
+        $this->setGameStateProperty($game, 'dealerSeat', $seat);
+    }
+
+    protected function forceBlindSeats(GameService $game, int $smallBlindSeat, int $bigBlindSeat): void
+    {
+        $this->setGameStateProperty($game, 'smallBlindSeat', $smallBlindSeat);
+        $this->setGameStateProperty($game, 'bigBlindSeat', $bigBlindSeat);
+    }
+
+    protected function forceActionSeat(GameService $game, int $seat): void
+    {
+        $this->setGameStateProperty($game, 'actionSeat', $seat);
     }
 
     /**
@@ -176,10 +196,7 @@ trait GameServiceStateHelpers
      */
     protected function getCurrentBet(GameService $game): int
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('currentBet');
-        $property->setAccessible(true);
-        return (int)$property->getValue($game);
+        return (int)$this->getGameStateProperty($game, 'currentBet');
     }
 
     /**
@@ -190,10 +207,7 @@ trait GameServiceStateHelpers
      */
     protected function getLastRaiseAmount(GameService $game): int
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('lastRaiseAmount');
-        $property->setAccessible(true);
-        return (int)$property->getValue($game);
+        return (int)$this->getGameStateProperty($game, 'lastRaiseAmount');
     }
 
     /**
@@ -205,10 +219,7 @@ trait GameServiceStateHelpers
      */
     protected function getTotalInvested(GameService $game, int $seat): int
     {
-        $reflection = new \ReflectionClass($game);
-        $playersProperty = $reflection->getProperty('players');
-        $playersProperty->setAccessible(true);
-        $players = $playersProperty->getValue($game);
+        $players = $this->getPlayers($game);
         
         if (!isset($players[$seat])) {
             return 0;
@@ -226,10 +237,7 @@ trait GameServiceStateHelpers
      */
     protected function getActedThisStreet(GameService $game, int $seat): bool
     {
-        $reflection = new \ReflectionClass($game);
-        $playersProperty = $reflection->getProperty('players');
-        $playersProperty->setAccessible(true);
-        $players = $playersProperty->getValue($game);
+        $players = $this->getPlayers($game);
         
         if (!isset($players[$seat])) {
             return false;
@@ -246,10 +254,7 @@ trait GameServiceStateHelpers
      */
     protected function getDealerSeat(GameService $game): int
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('dealerSeat');
-        $property->setAccessible(true);
-        return (int)$property->getValue($game);
+        return (int)$this->getGameStateProperty($game, 'dealerSeat');
     }
 
     /**
@@ -260,15 +265,9 @@ trait GameServiceStateHelpers
      */
     protected function getBlindSeats(GameService $game): array
     {
-        $reflection = new \ReflectionClass($game);
-        $sbProperty = $reflection->getProperty('smallBlindSeat');
-        $bbProperty = $reflection->getProperty('bigBlindSeat');
-        $sbProperty->setAccessible(true);
-        $bbProperty->setAccessible(true);
-        
         return [
-            'smallBlind' => (int)$sbProperty->getValue($game),
-            'bigBlind' => (int)$bbProperty->getValue($game),
+            'smallBlind' => (int)$this->getGameStateProperty($game, 'smallBlindSeat'),
+            'bigBlind' => (int)$this->getGameStateProperty($game, 'bigBlindSeat'),
         ];
     }
 
@@ -280,10 +279,7 @@ trait GameServiceStateHelpers
      */
     protected function getPhase(GameService $game): Phase
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('phase');
-        $property->setAccessible(true);
-        return $property->getValue($game);
+        return $this->getGameStateProperty($game, 'phase');
     }
 
     /**
@@ -294,10 +290,7 @@ trait GameServiceStateHelpers
      */
     protected function getPot(GameService $game): int
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('pot');
-        $property->setAccessible(true);
-        return (int)$property->getValue($game);
+        return (int)$this->getGameStateProperty($game, 'pot');
     }
 
     /**
@@ -308,10 +301,7 @@ trait GameServiceStateHelpers
      */
     protected function getPlayers(GameService $game): array
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('players');
-        $property->setAccessible(true);
-        return $property->getValue($game);
+        return $this->getGameStateProperty($game, 'players');
     }
 
     /**
@@ -322,10 +312,7 @@ trait GameServiceStateHelpers
      */
     protected function getBoard(GameService $game): array
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('board');
-        $property->setAccessible(true);
-        return $property->getValue($game);
+        return $this->getGameStateProperty($game, 'board');
     }
 
     /**
@@ -336,10 +323,10 @@ trait GameServiceStateHelpers
      */
     protected function getActivePlayers(GameService $game): array
     {
-        $reflection = new \ReflectionClass($game);
-        $method = $reflection->getMethod('getActivePlayers');
-        $method->setAccessible(true);
-        return $method->invoke($game);
+        return array_filter(
+            $this->getPlayers($game),
+            static fn(PlayerState $player): bool => !$player->folded && !$player->allIn
+        );
     }
 
     /**
@@ -350,10 +337,7 @@ trait GameServiceStateHelpers
      */
     protected function getActionSeat(GameService $game): int
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('actionSeat');
-        $property->setAccessible(true);
-        return (int)$property->getValue($game);
+        return (int)$this->getGameStateProperty($game, 'actionSeat');
     }
 
     /**
@@ -364,10 +348,30 @@ trait GameServiceStateHelpers
      */
     protected function getLastRaiseSeat(GameService $game): int
     {
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('lastRaiseSeat');
-        $property->setAccessible(true);
-        return (int)$property->getValue($game);
+        return (int)$this->getGameStateProperty($game, 'lastRaiseSeat');
+    }
+
+    protected function getNextActiveSeat(array $players, int $startSeat): int
+    {
+        $seats = array_keys($players);
+        sort($seats);
+
+        $startIndex = array_search($startSeat, $seats, true);
+        if ($startIndex === false) {
+            return $seats[0] ?? -1;
+        }
+
+        $count = count($seats);
+        for ($offset = 1; $offset <= $count; $offset++) {
+            $seat = $seats[($startIndex + $offset) % $count];
+            $player = $players[$seat];
+
+            if (!$player->folded && !$player->allIn) {
+                return $seat;
+            }
+        }
+
+        return -1;
     }
 
     /**
@@ -377,10 +381,9 @@ trait GameServiceStateHelpers
      * @param array<string, mixed> $options Optional configuration:
      *   - 'smallBlindAmount' => int (default: 10)
      *   - 'bigBlindAmount' => int (default: 20)
-     *   - 'pdo' => PDO|null (default: null)
+     *   - 'pdo' => PDO|null (default: sqlite memory connection)
      *   - 'gameId' => int|null (default: null)
-     *   - 'tableId' => int|null (default: null)
-     *   - 'dealer' => DealerService|null (default: null, creates new if not provided)
+     *   - 'dealer' => DealerService|null (default: null)
      * @return GameService Game service instance with players injected
      */
     protected function createGameService(array $players, array $options = []): GameService
@@ -389,39 +392,25 @@ trait GameServiceStateHelpers
         
         $smallBlindAmount = (int)($options['smallBlindAmount'] ?? 10);
         $bigBlindAmount = (int)($options['bigBlindAmount'] ?? 20);
-        $pdo = $options['pdo'] ?? null;
+        $pdo = $options['pdo'] ?? new \PDO('sqlite::memory:');
         $gameId = isset($options['gameId']) ? (int)$options['gameId'] : null;
-        $tableId = isset($options['tableId']) ? (int)$options['tableId'] : null;
-        
-        $game = new GameService($smallBlindAmount, $bigBlindAmount, $pdo, $gameId, $tableId);
+
+        $persistence = new GamePersistence($pdo);
+        $game = new GameService($persistence, $smallBlindAmount, $bigBlindAmount);
+
+        if ($gameId !== null) {
+            $game->setGameId($gameId);
+        }
         
         // Inject custom dealer if provided
         if (isset($options['dealer']) && $options['dealer'] instanceof \DealerService) {
-            $reflection = new \ReflectionClass($game);
-            $dealerProperty = $reflection->getProperty('dealer');
-            $dealerProperty->setAccessible(true);
-            $dealerProperty->setValue($game, $options['dealer']);
+            $this->setGameStateProperty($game, 'dealer', $options['dealer']);
         }
         
-        // Inject players using reflection
         if (!empty($players)) {
-            $reflection = new \ReflectionClass($game);
-            $playersProperty = $reflection->getProperty('players');
-            $playersProperty->setAccessible(true);
-            
-            $playerStates = [];
-            foreach ($players as $playerConfig) {
-                $seat = (int)$playerConfig['seat'];
-                $stack = (int)$playerConfig['stack'];
-                $playerStates[$seat] = new \PlayerState(
-                    seat: $seat,
-                    stack: $stack
-                );
-            }
-            
-            $playersProperty->setValue($game, $playerStates);
+            $game->loadPlayers($players);
         }
-        
+
         return $game;
     }
 }

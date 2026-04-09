@@ -128,10 +128,12 @@ function db_update_game_version(PDO $pdo, int $gameId, int $newVersion): bool
         WHERE id = :game_id
     ");
     
-    return $stmt->execute([
+    $stmt->execute([
         'version' => $newVersion,
         'game_id' => $gameId,
     ]);
+
+    return $stmt->rowCount() > 0;
 }
 
 /**
@@ -150,7 +152,8 @@ function db_end_game(PDO $pdo, int $gameId): bool
         WHERE id = :game_id
     ");
     
-    return $stmt->execute(['game_id' => $gameId]);
+    $stmt->execute(['game_id' => $gameId]);
+    return $stmt->rowCount() > 0;
 }
 
 /**

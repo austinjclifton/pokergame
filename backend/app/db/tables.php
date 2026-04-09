@@ -99,7 +99,7 @@ function db_list_active_tables(PDO $pdo): array
         SELECT id, name, max_seats, small_blind, big_blind, ante, status, created_at
         FROM tables
         WHERE status IN ('OPEN', 'IN_GAME')
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
     ");
     
     $stmt->execute();
@@ -132,9 +132,11 @@ function db_update_table_status(PDO $pdo, int $tableId, string $status): bool
         WHERE id = :table_id
     ");
     
-    return $stmt->execute([
+    $stmt->execute([
         'status' => $status,
         'table_id' => $tableId,
     ]);
+
+    return $stmt->rowCount() > 0;
 }
 

@@ -75,6 +75,23 @@ function db_get_online_users(PDO $pdo): array {
 }
 
 /**
+ * Retrieve all users currently visible in the lobby.
+ * Includes both `online` and `in_game` presence records.
+ *
+ * @return array<array{user_id:int|string,user_username:string,status:string,last_seen_at:string}>
+ */
+function db_get_visible_presence_users(PDO $pdo): array {
+    $stmt = $pdo->query(" 
+        SELECT user_id, user_username, status, last_seen_at
+        FROM user_lobby_presence
+        WHERE status IN ('online', 'in_game')
+        ORDER BY user_username
+    ");
+
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/**
  * (Optional) Remove users who haven't been seen for a given number of minutes.
  * Useful for periodic cleanup if clients disconnect unexpectedly.
  */

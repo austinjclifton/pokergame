@@ -29,10 +29,27 @@ final class GameServiceTest extends TestCase
         require_once __DIR__ . '/../../app/services/game/cards/HandEvaluator.php';
         require_once __DIR__ . '/../../app/services/game/engine/BettingEngine.php';
         require_once __DIR__ . '/../../app/services/game/engine/PhaseManager.php';
+        require_once __DIR__ . '/../../app/services/game/GamePersistence.php';
         require_once __DIR__ . '/../../app/services/game/rules/WinnerCalculator.php';
         require_once __DIR__ . '/../../app/services/game/GameService.php';
-        
-        $this->game = new GameService(10, 20); // SB=10, BB=20
+
+        $this->game = new GameService(new GamePersistence(new PDO('sqlite::memory:')), 10, 20);
+    }
+
+    private function startHandWithPlayers(array $players): array
+    {
+        $this->game->loadPlayers($players);
+        return $this->game->startHand();
+    }
+
+    private function act(int $seat, ActionType $action, int $amount = 0): array
+    {
+        return $this->game->applyAction($seat, $action->value, $amount);
+    }
+
+    private function legalActions(int $seat): array
+    {
+        return $this->game->getLegalActionsForSeat($seat);
     }
 
     /**
@@ -41,7 +58,7 @@ final class GameServiceTest extends TestCase
     public function testTwoPlayerHandCheckDownToShowdown(): void
     {
         // Start hand with 2 players
-        $result = $this->game->startHand([
+        $result = $this->startHandWithPlayers([
             ['seat' => 1, 'stack' => 1000],
             ['seat' => 2, 'stack' => 1000],
         ]);
@@ -66,13 +83,13 @@ final class GameServiceTest extends TestCase
         
         // Player 1 (SB) needs to act first (after BB)
         // Since BB is 20 and SB bet 10, player 1 needs to call 10 more
-        $legalActions = $this->game->getLegalActions(1);
+        $legalActions = $this->legalActions(1);
         $this->assertContains(ActionType::CALL, $legalActions);
         $this->assertContains(ActionType::FOLD, $legalActions);
         $this->assertContains(ActionType::RAISE, $legalActions);
         
         // Player 1 calls
-        $result = $this->game->playerAction(1, ActionType::CALL);
+        $result = $this->act(1, ActionType::CALL);
         $this->assertTrue($result['ok']);
         
         $state = $result['state'];
@@ -81,11 +98,11 @@ final class GameServiceTest extends TestCase
         $this->assertEquals(20, $state['players'][1]['bet']); // Now matched BB
         
         // Player 2 (BB) can now check (no bet to call)
-        $legalActions = $this->game->getLegalActions(2);
+        $legalActions = $this->legalActions(2);
         $this->assertContains(ActionType::CHECK, $legalActions);
         
         // Player 2 checks
-        $result = $this->game->playerAction(2, ActionType::CHECK);
+        $result = $this->act(2, ActionType::CHECK);
         $this->assertTrue($result['ok']);
         
         // Betting round should be complete, flop should be dealt automatically
@@ -98,17 +115,17 @@ final class GameServiceTest extends TestCase
         $this->assertEquals(0, $state['players'][1]['bet']);
         $this->assertEquals(0, $state['players'][2]['bet']);
         
-        // Player 1 acts first on flop (after dealer)
-        $legalActions = $this->game->getLegalActions(1);
+        // Player 2 acts first on flop in heads-up play (left of dealer)
+        $legalActions = $this->legalActions(2);
         $this->assertContains(ActionType::CHECK, $legalActions);
         $this->assertContains(ActionType::BET, $legalActions);
         
-        // Player 1 checks
-        $result = $this->game->playerAction(1, ActionType::CHECK);
+        // Player 2 checks
+        $result = $this->act(2, ActionType::CHECK);
         $this->assertTrue($result['ok']);
         
-        // Player 2 checks
-        $result = $this->game->playerAction(2, ActionType::CHECK);
+        // Player 1 checks
+        $result = $this->act(1, ActionType::CHECK);
         $this->assertTrue($result['ok']);
         
         // Turn should be dealt automatically
@@ -117,10 +134,10 @@ final class GameServiceTest extends TestCase
         $this->assertCount(4, $state['board']);
         
         // Both players check on turn
-        $result = $this->game->playerAction(1, ActionType::CHECK);
+        $result = $this->act(2, ActionType::CHECK);
         $this->assertTrue($result['ok']);
         
-        $result = $this->game->playerAction(2, ActionType::CHECK);
+        $result = $this->act(1, ActionType::CHECK);
         $this->assertTrue($result['ok']);
         
         // River should be dealt automatically
@@ -129,21 +146,16 @@ final class GameServiceTest extends TestCase
         $this->assertCount(5, $state['board']);
         
         // Both players check on river
-        $result = $this->game->playerAction(1, ActionType::CHECK);
+        $result = $this->act(2, ActionType::CHECK);
         $this->assertTrue($result['ok']);
         
-        $result = $this->game->playerAction(2, ActionType::CHECK);
+        $result = $this->act(1, ActionType::CHECK);
         $this->assertTrue($result['ok']);
         
-        // Should advance to showdown
+        // Showdown settlement now happens automatically on the final action
         $state = $result['state'];
+        $this->assertTrue($result['handEnded']);
         $this->assertEquals('showdown', $state['phase']);
-        
-        // Evaluate winners
-        $result = $this->game->evaluateWinners();
-        $this->assertTrue($result['ok']);
-        $this->assertArrayHasKey('winners', $result);
-        $this->assertArrayHasKey('state', $result);
         
         // Verify hands were evaluated
         $finalState = $result['state'];
@@ -153,7 +165,14 @@ final class GameServiceTest extends TestCase
         $this->assertNotNull($finalState['players'][2]['handDescription']);
         
         // Verify winners array structure
-        $winners = $result['winners'];
+        $winners = array_map(
+            static fn(array $winner): array => [
+                'seat' => (int)$winner['seat'],
+                'amount' => (int)$winner['amount'],
+                'reason' => (string)$winner['handDescription'],
+            ],
+            $result['summary']['winners']
+        );
         $this->assertIsArray($winners);
         $this->assertGreaterThan(0, count($winners));
         
@@ -177,7 +196,7 @@ final class GameServiceTest extends TestCase
      */
     public function testStartHandRequiresAtLeastTwoPlayers(): void
     {
-        $result = $this->game->startHand([
+        $result = $this->startHandWithPlayers([
             ['seat' => 1, 'stack' => 1000],
         ]);
         
@@ -191,13 +210,13 @@ final class GameServiceTest extends TestCase
      */
     public function testPlayerCannotActOutOfTurn(): void
     {
-        $this->game->startHand([
+        $this->startHandWithPlayers([
             ['seat' => 1, 'stack' => 1000],
             ['seat' => 2, 'stack' => 1000],
         ]);
         
         // Try to have player 2 act when it's player 1's turn
-        $result = $this->game->playerAction(2, ActionType::CALL);
+        $result = $this->act(2, ActionType::CALL);
         
         $this->assertFalse($result['ok']);
         $this->assertStringContainsString('turn', $result['message']);
@@ -208,17 +227,17 @@ final class GameServiceTest extends TestCase
      */
     public function testFoldedPlayerCannotAct(): void
     {
-        $this->game->startHand([
+        $this->startHandWithPlayers([
             ['seat' => 1, 'stack' => 1000],
             ['seat' => 2, 'stack' => 1000],
         ]);
         
         // Player 1 folds
-        $result = $this->game->playerAction(1, ActionType::FOLD);
+        $result = $this->act(1, ActionType::FOLD);
         $this->assertTrue($result['ok']);
         
         // Try to have player 1 act again
-        $result = $this->game->playerAction(1, ActionType::CALL);
+        $result = $this->act(1, ActionType::CALL);
         $this->assertFalse($result['ok']);
         $this->assertStringContainsString('folded', $result['message']);
     }
@@ -228,16 +247,16 @@ final class GameServiceTest extends TestCase
      */
     public function testCannotCheckWhenBetRequired(): void
     {
-        $this->game->startHand([
+        $this->startHandWithPlayers([
             ['seat' => 1, 'stack' => 1000],
             ['seat' => 2, 'stack' => 1000],
         ]);
         
         // Player 1 tries to check when they need to call
-        $result = $this->game->playerAction(1, ActionType::CHECK);
+        $result = $this->act(1, ActionType::CHECK);
         
         $this->assertFalse($result['ok']);
-        $this->assertStringContainsString('check', strtolower($result['message']));
+        $this->assertStringContainsString('illegal action', strtolower($result['message']));
     }
 
     /**
@@ -245,39 +264,39 @@ final class GameServiceTest extends TestCase
      */
     public function testBettingAndRaising(): void
     {
-        $this->game->startHand([
+        $this->startHandWithPlayers([
             ['seat' => 1, 'stack' => 1000],
             ['seat' => 2, 'stack' => 1000],
         ]);
         
         // Player 1 calls BB
-        $this->game->playerAction(1, ActionType::CALL);
+        $this->act(1, ActionType::CALL);
         
         // Player 2 checks (completing preflop)
-        $this->game->playerAction(2, ActionType::CHECK);
+        $this->act(2, ActionType::CHECK);
         
-        // Now on flop, player 1 can bet
-        $result = $this->game->playerAction(1, ActionType::BET, 50);
+        // Now on flop, player 2 acts first and can bet
+        $result = $this->act(2, ActionType::BET, 50);
         $this->assertTrue($result['ok']);
         
         $state = $result['state'];
         $this->assertEquals(50, $state['currentBet']);
-        $this->assertEquals(50, $state['players'][1]['bet']);
+        $this->assertEquals(50, $state['players'][2]['bet']);
         $this->assertEquals(90, $state['pot']); // 40 from preflop + 50 bet
         
-        // Player 2 can call, fold, or raise
-        $legalActions = $this->game->getLegalActions(2);
+        // Player 1 can call, fold, or raise
+        $legalActions = $this->legalActions(1);
         $this->assertContains(ActionType::CALL, $legalActions);
         $this->assertContains(ActionType::FOLD, $legalActions);
         $this->assertContains(ActionType::RAISE, $legalActions);
         
-        // Player 2 raises to 100
-        $result = $this->game->playerAction(2, ActionType::RAISE, 50);
+        // Player 1 raises to 100
+        $result = $this->act(1, ActionType::RAISE, 50);
         $this->assertTrue($result['ok']);
         
         $state = $result['state'];
         $this->assertEquals(100, $state['currentBet']);
-        $this->assertEquals(100, $state['players'][2]['bet']);
+        $this->assertEquals(100, $state['players'][1]['bet']);
     }
 
     /**
@@ -285,25 +304,30 @@ final class GameServiceTest extends TestCase
      */
     public function testAllIn(): void
     {
-        $this->game->startHand([
+        $this->startHandWithPlayers([
             ['seat' => 1, 'stack' => 100],
             ['seat' => 2, 'stack' => 1000],
         ]);
         
         // Player 1 calls BB (10 more)
-        $this->game->playerAction(1, ActionType::CALL);
+        $this->act(1, ActionType::CALL);
         
         // Player 2 checks
-        $this->game->playerAction(2, ActionType::CHECK);
+        $this->act(2, ActionType::CHECK);
+
+        // Player 2 checks on the flop so player 1 can shove
+        $result = $this->act(2, ActionType::CHECK);
+        $this->assertTrue($result['ok']);
         
         // On flop, player 1 goes all-in
-        $result = $this->game->playerAction(1, ActionType::ALLIN);
+        $result = $this->act(1, ActionType::ALLIN);
         $this->assertTrue($result['ok']);
         
         $state = $result['state'];
         $this->assertTrue($state['players'][1]['allIn']);
         $this->assertEquals(0, $state['players'][1]['stack']);
-        $this->assertEquals(90, $state['players'][1]['bet']); // 10 + 20 + 60
+        $this->assertEquals(80, $state['players'][1]['bet']);
+        $this->assertEquals(100, $state['players'][1]['totalInvested']);
     }
 
     /**
@@ -311,24 +335,25 @@ final class GameServiceTest extends TestCase
      */
     public function testDealFlopOnlyAfterPreflop(): void
     {
-        $this->game->startHand([
+        $result = $this->startHandWithPlayers([
             ['seat' => 1, 'stack' => 1000],
             ['seat' => 2, 'stack' => 1000],
         ]);
+        $this->assertTrue($result['ok']);
         
-        // Try to deal flop manually before betting round is complete (should fail)
-        $result = $this->game->dealFlop();
-        $this->assertFalse($result['ok']); // Should fail because betting round not complete
-        $this->assertStringContainsString('betting round', $result['message']);
+        $state = $this->game->getSnapshot();
+        $this->assertSame('preflop', $state['phase']);
+        $this->assertCount(0, $state['board']);
         
-        // Complete preflop first
-        $this->game->playerAction(1, ActionType::CALL);
-        $this->game->playerAction(2, ActionType::CHECK);
+        $result = $this->act(1, ActionType::CALL);
+        $this->assertTrue($result['ok']);
+        $this->assertSame('preflop', $result['state']['phase']);
+        $this->assertCount(0, $result['state']['board']);
         
-        // Now flop should be automatically dealt, so manual deal should fail
-        $result = $this->game->dealFlop();
-        $this->assertFalse($result['ok']);
-        $this->assertStringContainsString('preflop', $result['message']);
+        $result = $this->act(2, ActionType::CHECK);
+        $this->assertTrue($result['ok']);
+        $this->assertSame('flop', $result['state']['phase']);
+        $this->assertCount(3, $result['state']['board']);
     }
 
     /**
@@ -336,12 +361,13 @@ final class GameServiceTest extends TestCase
      */
     public function testGetStateReturnsCompleteSnapshot(): void
     {
-        $this->game->startHand([
+        $result = $this->startHandWithPlayers([
             ['seat' => 1, 'stack' => 1000],
             ['seat' => 2, 'stack' => 1000],
         ]);
+        $this->assertTrue($result['ok']);
         
-        $state = $this->game->getState();
+        $state = $this->game->getSnapshot();
         
         $this->assertArrayHasKey('phase', $state);
         $this->assertArrayHasKey('board', $state);

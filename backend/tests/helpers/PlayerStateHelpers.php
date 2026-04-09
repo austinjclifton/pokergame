@@ -30,16 +30,14 @@ trait PlayerStateHelpers
      */
     protected function makePlayerState(int $seat, int $stack, array $options = []): PlayerState
     {
-        $player = new PlayerState(
-            seat: $seat,
-            stack: $stack,
-            bet: $options['bet'] ?? 0,
-            folded: $options['folded'] ?? false,
-            allIn: $options['allIn'] ?? false,
-            cards: $options['cards'] ?? [],
-            handRank: $options['handRank'] ?? null,
-            handDescription: $options['handDescription'] ?? null
-        );
+        $player = new PlayerState($seat, $stack);
+
+        $player->bet = (int)($options['bet'] ?? 0);
+        $player->folded = (bool)($options['folded'] ?? false);
+        $player->allIn = (bool)($options['allIn'] ?? false);
+        $player->cards = $options['cards'] ?? [];
+        $player->handRank = $options['handRank'] ?? null;
+        $player->handDescription = $options['handDescription'] ?? null;
         
         if (isset($options['actedThisStreet'])) {
             $player->actedThisStreet = (bool)$options['actedThisStreet'];
@@ -47,6 +45,16 @@ trait PlayerStateHelpers
         
         if (isset($options['totalInvested'])) {
             $player->totalInvested = (int)$options['totalInvested'];
+        }
+
+        if (isset($options['contribution'])) {
+            $player->contribution = (int)$options['contribution'];
+        } elseif (isset($options['totalInvested'])) {
+            $player->contribution = (int)$options['totalInvested'];
+        }
+
+        if (isset($options['user_id'])) {
+            $player->user_id = (int)$options['user_id'];
         }
         
         return $player;

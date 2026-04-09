@@ -90,7 +90,7 @@ final class BettingEngineTest extends TestCase
         $result = BettingEngine::executeAction($player1, ActionType::RAISE, 15, $currentBet, $bigBlindAmount, $lastRaiseAmount);
         
         $this->assertFalse($result['ok'], 'Insufficient raise should be rejected');
-        $this->assertStringContainsString('Minimum raise is 40', $result['message'] ?? '', 'Error should specify minimum raise amount');
+        $this->assertStringContainsString('Minimum raise is to 40', $result['message'] ?? '', 'Error should specify minimum raise amount');
         
         // Verify no chips were moved
         $this->assertEquals($initialStack, $player1->stack, 'Stack should not change on failed raise');
@@ -216,7 +216,7 @@ final class BettingEngineTest extends TestCase
         $player2->bet = 0; // Reset for next test
         $result2 = BettingEngine::executeAction($player2, ActionType::RAISE, 15, $currentBet, $bigBlindAmount, $expectedLastRaiseAmount);
         $this->assertFalse($result2['ok'], 'Raise to 55 should fail');
-        $this->assertStringContainsString('Minimum raise is 60', $result2['message'] ?? '', 'Error should specify minimum raise of 60');
+        $this->assertStringContainsString('Minimum raise is to 60', $result2['message'] ?? '', 'Error should specify minimum raise of 60');
     }
 }
 

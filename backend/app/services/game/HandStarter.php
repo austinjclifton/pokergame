@@ -27,6 +27,7 @@ final class HandStarter
         // ---------------------------------------------------------
         // 1. Create dealer + shuffle
         // ---------------------------------------------------------
+        $state->deckSeed = $forcedSeed;
         $state->dealer = new DealerService($forcedSeed);
         $state->dealer->shuffleDeck();
 
@@ -55,8 +56,13 @@ final class HandStarter
         // ---------------------------------------------------------
         // 3. Assign blinds
         // ---------------------------------------------------------
-        $state->smallBlindSeat = self::nextSeat($state->players, $state->dealerSeat);
-        $state->bigBlindSeat   = self::nextSeat($state->players, $state->smallBlindSeat);
+        if (count($state->players) === 2) {
+            $state->smallBlindSeat = $state->dealerSeat;
+            $state->bigBlindSeat   = self::nextSeat($state->players, $state->dealerSeat);
+        } else {
+            $state->smallBlindSeat = self::nextSeat($state->players, $state->dealerSeat);
+            $state->bigBlindSeat   = self::nextSeat($state->players, $state->smallBlindSeat);
+        }
 
         $state->smallBlindAmount = $smallBlind;
         $state->bigBlindAmount   = $bigBlind;

@@ -2,9 +2,7 @@
 declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
-use Ratchet\ConnectionInterface;
-use Psr\Http\Message\RequestInterface;
-use Psr\Http\Message\UriInterface;
+require_once __DIR__ . '/../../helpers/WebSocketTestDoubles.php';
 
 /**
  * Integration tests for GameSocket WebSocket handler.
@@ -17,108 +15,12 @@ use Psr\Http\Message\UriInterface;
  * 
  * @coversNothing
  */
-class TestGameConnection implements ConnectionInterface
-{
-    public $resourceId;
-    public $userCtx;
-    public $httpRequest;
-    public array $sentMessages = [];
-    public bool $isClosed = false;
-    
-    public function __construct(int $resourceId, array $userCtx, $httpRequest = null)
-    {
-        $this->resourceId = $resourceId;
-        $this->userCtx = $userCtx;
-        $this->httpRequest = $httpRequest;
-    }
-    
-    public function send($data): void
-    {
-        if ($this->isClosed) {
-            throw new \RuntimeException('Cannot send message on closed connection');
-        }
-        $this->sentMessages[] = $data;
-    }
-    
-    public function close(): void
-    {
-        $this->isClosed = true;
-    }
-}
-
-class TestRequest implements RequestInterface
-{
-    private UriInterface $uri;
-    
-    public function __construct(string $queryString)
-    {
-        $this->uri = new class($queryString) implements UriInterface {
-            private string $query;
-            
-            public function __construct(string $query)
-            {
-                $this->query = $query;
-            }
-            
-            public function getQuery(): string { return $this->query; }
-            public function getScheme(): string { return 'ws'; }
-            public function getAuthority(): string { return ''; }
-            public function getUserInfo(): string { return ''; }
-            public function getHost(): string { return ''; }
-            public function getPort(): ?int { return null; }
-            public function getPath(): string { return '/game'; }
-            public function getFragment(): string { return ''; }
-            public function withScheme(string $scheme): UriInterface { return $this; }
-            public function withUserInfo(string $user, ?string $password = null): UriInterface { return $this; }
-            public function withHost(string $host): UriInterface { return $this; }
-            public function withPort(?int $port): UriInterface { return $this; }
-            public function withPath(string $path): UriInterface { return $this; }
-            public function withQuery(string $query): UriInterface { return $this; }
-            public function withFragment(string $fragment): UriInterface { return $this; }
-            public function __toString(): string { return ''; }
-        };
-    }
-    
-    public function getRequestTarget(): string { return ''; }
-    public function withRequestTarget($requestTarget): RequestInterface { return $this; }
-    public function getMethod(): string { return 'GET'; }
-    public function withMethod($method): RequestInterface { return $this; }
-    public function getUri(): UriInterface { return $this->uri; }
-    public function withUri(UriInterface $uri, $preserveHost = false): RequestInterface { return $this; }
-    public function getProtocolVersion(): string { return '1.1'; }
-    public function withProtocolVersion($version): RequestInterface { return $this; }
-    public function getHeaders(): array { return []; }
-    public function hasHeader($name): bool { return false; }
-    public function getHeader($name): array { return []; }
-    public function getHeaderLine($name): string { return ''; }
-    public function withHeader($name, $value): RequestInterface { return $this; }
-    public function withAddedHeader($name, $value): RequestInterface { return $this; }
-    public function withoutHeader($name): RequestInterface { return $this; }
-    public function getBody(): \Psr\Http\Message\StreamInterface { return new class implements \Psr\Http\Message\StreamInterface {
-        public function __toString(): string { return ''; }
-        public function close(): void {}
-        public function detach() { return null; }
-        public function getSize(): ?int { return null; }
-        public function tell(): int { return 0; }
-        public function eof(): bool { return true; }
-        public function isSeekable(): bool { return false; }
-        public function seek($offset, $whence = SEEK_SET): void {}
-        public function rewind(): void {}
-        public function isWritable(): bool { return false; }
-        public function write($string): int { return 0; }
-        public function isReadable(): bool { return false; }
-        public function read($length): string { return ''; }
-        public function getContents(): string { return ''; }
-        public function getMetadata($key = null) { return null; }
-    }; }
-    public function withBody(\Psr\Http\Message\StreamInterface $body): RequestInterface { return $this; }
-}
-
 final class GameSocketTest extends TestCase
 {
     private PDO $pdo;
     private bool $inTransaction = false;
     private $gameSocket;
+    private int $tableId;
     private int $gameId;
     private int $userId1;
     private int $userId2;
@@ -164,14 +66,20 @@ final class GameSocketTest extends TestCase
         require_once __DIR__ . '/../../../app/services/game/cards/DealerService.php';
         require_once __DIR__ . '/../../../app/services/game/cards/HandEvaluator.php';
         require_once __DIR__ . '/../../../app/db/games.php';
+        require_once __DIR__ . '/../../../app/db/tables.php';
+        require_once __DIR__ . '/../../../app/db/table_seats.php';
         require_once __DIR__ . '/../../../app/db/users.php';
 
         // Create test users
         $this->userId1 = $this->createTestUser('player1');
         $this->userId2 = $this->createTestUser('player2');
 
+        $this->tableId = (int) db_create_table($this->pdo, 'Test GameSocket Table', 2, 10, 20, 0);
+        db_seat_player($this->pdo, $this->tableId, 1, $this->userId1);
+        db_seat_player($this->pdo, $this->tableId, 2, $this->userId2);
+
         // Create test game
-        $this->gameId = db_create_game($this->pdo, $this->userId1, $this->userId2);
+        $this->gameId = (int) db_create_game($this->pdo, $this->tableId, 1, 1, 2, 12345);
 
         // Initialize GameSocket
         $this->gameSocket = new GameSocket($this->pdo);
@@ -196,16 +104,30 @@ final class GameSocketTest extends TestCase
         return (int)$this->pdo->lastInsertId();
     }
 
-    private function createConnection(int $resourceId, int $userId, int $gameId): TestGameConnection
+    private function createConnection(int $resourceId, int $userId, ?int $tableId = null): WebSocketTestConnection
     {
         $userCtx = [
             'user_id' => $userId,
             'session_id' => 1,
         ];
         
-        $request = new TestRequest("game_id={$gameId}");
-        $conn = new TestGameConnection($resourceId, $userCtx, $request);
+        $request = new WebSocketTestRequest('/game', 'table_id=' . ($tableId ?? $this->tableId));
+        $conn = new WebSocketTestConnection($resourceId, $request, $userCtx);
         return $conn;
+    }
+
+    private function createLobbyConnection(int $resourceId, int $userId): WebSocketTestConnection
+    {
+        return new WebSocketTestConnection($resourceId, null, [
+            'user_id' => $userId,
+            'session_id' => 1,
+        ]);
+    }
+
+    private function openAuthenticatedConnection(WebSocketTestConnection $conn): void
+    {
+        $this->gameSocket->onOpen($conn);
+        $this->gameSocket->onAuthenticated($conn);
     }
 
     /**
@@ -213,8 +135,8 @@ final class GameSocketTest extends TestCase
      */
     public function testPlayerAuthentication(): void
     {
-        $conn = $this->createConnection(1, $this->userId1, $this->gameId);
-        $this->gameSocket->onOpen($conn);
+        $conn = $this->createConnection(1, $this->userId1);
+        $this->openAuthenticatedConnection($conn);
 
         // Should receive state sync messages
         $this->assertGreaterThan(0, count($conn->sentMessages), 'Should receive messages on connect');
@@ -233,13 +155,85 @@ final class GameSocketTest extends TestCase
         $this->assertTrue($hasStateSync, 'Should receive STATE_SYNC message');
     }
 
+    public function testHandStartBroadcastUsesPublicState(): void
+    {
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
+
+        $this->openAuthenticatedConnection($conn1);
+        $this->openAuthenticatedConnection($conn2);
+
+        $handStart = null;
+        foreach ($conn1->sentMessages as $msg) {
+            $data = json_decode($msg, true);
+            if (($data['type'] ?? null) !== 'hand_start') {
+                continue;
+            }
+
+            $handStart = $data;
+            break;
+        }
+
+        $this->assertNotNull($handStart, 'Expected hand_start broadcast when the opening hand bootstraps');
+        $this->assertArrayHasKey('state', $handStart);
+        $this->assertArrayHasKey('players', $handStart['state']);
+
+        foreach ($handStart['state']['players'] as $player) {
+            $this->assertArrayNotHasKey('cards', $player, 'hand_start public state must not expose hole cards');
+        }
+
+        $encoded = json_encode($handStart);
+        $this->assertIsString($encoded);
+        $this->assertStringNotContainsString('deckIndex', $encoded, 'hand_start public state must not expose dealer internals');
+    }
+
+    public function testGameStateUsesTableBlindLevels(): void
+    {
+        $tableId = (int) db_create_table($this->pdo, 'High Stakes Table', 2, 25, 50, 0);
+        db_seat_player($this->pdo, $tableId, 1, $this->userId1);
+        db_seat_player($this->pdo, $tableId, 2, $this->userId2);
+        $gameId = (int) db_create_game($this->pdo, $tableId, 1, 1, 2, 54321);
+
+        $gameSocket = new GameSocket($this->pdo);
+        $conn1 = $this->createConnection(101, $this->userId1, $tableId);
+        $conn2 = $this->createConnection(102, $this->userId2, $tableId);
+
+        $gameSocket->onOpen($conn1);
+        $gameSocket->onAuthenticated($conn1);
+        $gameSocket->onOpen($conn2);
+        $gameSocket->onAuthenticated($conn2);
+
+        $stateSync = null;
+        foreach ($conn1->sentMessages as $msg) {
+            $data = json_decode($msg, true);
+            if (($data['type'] ?? null) !== 'STATE_SYNC') {
+                continue;
+            }
+
+            if (($data['game_id'] ?? null) !== $gameId) {
+                continue;
+            }
+
+            $stateSync = $data;
+        }
+
+        $this->assertNotNull($stateSync, 'Expected STATE_SYNC for the high-stakes table');
+        $this->assertSame(75, $stateSync['state']['pot']);
+        $this->assertSame(50, $stateSync['state']['currentBet']);
+    }
+
     /**
      * Test that unauthorized connection is rejected
      */
     public function testUnauthorizedConnectionRejected(): void
     {
-        $conn = new TestGameConnection(1, []); // No userCtx
+        $conn = new WebSocketTestConnection(
+            1,
+            new WebSocketTestRequest('/game', "table_id={$this->tableId}"),
+            []
+        );
         $this->gameSocket->onOpen($conn);
+        $this->gameSocket->onAuthenticated($conn);
 
         $this->assertTrue($conn->isClosed, 'Unauthorized connection should be closed');
         $this->assertGreaterThan(0, count($conn->sentMessages), 'Should receive error message');
@@ -261,25 +255,42 @@ final class GameSocketTest extends TestCase
     public function testActionFlowUpdatesStateForAllConnections(): void
     {
         // Create two connections (two players)
-        $conn1 = $this->createConnection(1, $this->userId1, $this->gameId);
-        $conn2 = $this->createConnection(2, $this->userId2, $this->gameId);
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
         
-        $this->gameSocket->onOpen($conn1);
-        $this->gameSocket->onOpen($conn2);
+        $this->openAuthenticatedConnection($conn1);
+        $this->openAuthenticatedConnection($conn2);
+
+        $conn1Private = null;
+        $conn2Private = null;
+        foreach ($conn1->sentMessages as $msg) {
+            $data = json_decode($msg, true);
+            if (($data['type'] ?? null) === 'STATE_PRIVATE') {
+                $conn1Private = $data['state'];
+            }
+        }
+        foreach ($conn2->sentMessages as $msg) {
+            $data = json_decode($msg, true);
+            if (($data['type'] ?? null) === 'STATE_PRIVATE') {
+                $conn2Private = $data['state'];
+            }
+        }
+
+        $actingConn = in_array('call', $conn1Private['legalActions'] ?? [], true) ? $conn1 : $conn2;
 
         // Clear initial messages
         $conn1->sentMessages = [];
         $conn2->sentMessages = [];
 
-        // Player 1 (seat 1) sends a check action
+        // The current actor should be able to call the opening blind.
         $actionMsg = json_encode([
-            'cmd' => 'action',
-            'action' => 'check',
+            'type' => 'action',
+            'action' => 'call',
             'amount' => 0,
             'game_version' => 0,
         ]);
         
-        $this->gameSocket->onMessage($conn1, $actionMsg);
+        $this->gameSocket->onMessage($actingConn, $actionMsg);
 
         // Both connections should receive state updates
         $conn1ReceivedUpdate = false;
@@ -313,8 +324,8 @@ final class GameSocketTest extends TestCase
      */
     public function testPrivateVsPublicStateSeparation(): void
     {
-        $conn1 = $this->createConnection(1, $this->userId1, $this->gameId);
-        $this->gameSocket->onOpen($conn1);
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $this->openAuthenticatedConnection($conn1);
 
         // Find STATE_PRIVATE message
         $privateState = null;
@@ -351,8 +362,8 @@ final class GameSocketTest extends TestCase
     public function testReconnectReturnsConsistentState(): void
     {
         // Initial connection
-        $conn1 = $this->createConnection(1, $this->userId1, $this->gameId);
-        $this->gameSocket->onOpen($conn1);
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $this->openAuthenticatedConnection($conn1);
 
         // Get initial state
         $initialState = null;
@@ -370,8 +381,8 @@ final class GameSocketTest extends TestCase
         $this->gameSocket->onClose($conn1);
 
         // Reconnect
-        $conn2 = $this->createConnection(2, $this->userId1, $this->gameId);
-        $this->gameSocket->onOpen($conn2);
+        $conn2 = $this->createConnection(2, $this->userId1);
+        $this->openAuthenticatedConnection($conn2);
 
         // Get reconnected state
         $reconnectedState = null;
@@ -393,12 +404,12 @@ final class GameSocketTest extends TestCase
      */
     public function testInvalidActionRejected(): void
     {
-        $conn = $this->createConnection(1, $this->userId1, $this->gameId);
-        $this->gameSocket->onOpen($conn);
+        $conn = $this->createConnection(1, $this->userId1);
+        $this->openAuthenticatedConnection($conn);
 
         // Send invalid action
         $actionMsg = json_encode([
-            'cmd' => 'action',
+            'type' => 'action',
             'action' => 'invalid_action',
             'amount' => 0,
         ]);
@@ -423,12 +434,12 @@ final class GameSocketTest extends TestCase
      */
     public function testPingPong(): void
     {
-        $conn = $this->createConnection(1, $this->userId1, $this->gameId);
-        $this->gameSocket->onOpen($conn);
+        $conn = $this->createConnection(1, $this->userId1);
+        $this->openAuthenticatedConnection($conn);
 
         $conn->sentMessages = [];
         
-        $pingMsg = json_encode(['cmd' => 'ping']);
+        $pingMsg = json_encode(['type' => 'ping']);
         $this->gameSocket->onMessage($conn, $pingMsg);
 
         $pongFound = false;
@@ -441,6 +452,101 @@ final class GameSocketTest extends TestCase
         }
 
         $this->assertTrue($pongFound, 'Should receive pong for ping');
+    }
+
+    public function testConnectionWithoutActiveGameRejected(): void
+    {
+        $tableId = (int) db_create_table($this->pdo, 'No Active Game Table', 2, 10, 20, 0);
+        db_seat_player($this->pdo, $tableId, 1, $this->userId1);
+
+        $conn = $this->createConnection(99, $this->userId1, $tableId);
+        $this->gameSocket->onOpen($conn);
+        $this->gameSocket->onAuthenticated($conn);
+
+        $this->assertTrue($conn->isClosed, 'Connection without active game should be closed');
+        $this->assertNotEmpty($conn->sentMessages, 'Connection without active game should receive an error');
+
+        $error = json_decode($conn->sentMessages[0], true);
+        $this->assertIsArray($error);
+        $this->assertSame('error', $error['type'] ?? null);
+        $this->assertSame('game_not_found', $error['error'] ?? null);
+    }
+
+    public function testGamePresenceUpdateIncludesActiveTableId(): void
+    {
+        $lobbySocket = new LobbySocket($this->pdo);
+        $watcher = $this->createLobbyConnection(50, $this->userId2);
+        $lobbySocket->onOpen($watcher);
+        $watcher->sentMessages = [];
+
+        $gameSocket = new GameSocket($this->pdo, $lobbySocket);
+        $conn = $this->createConnection(1, $this->userId1);
+        $gameSocket->onOpen($conn);
+        $gameSocket->onAuthenticated($conn);
+
+        $presenceUpdate = null;
+        foreach ($watcher->sentMessages as $message) {
+            $decoded = json_decode($message, true);
+            if (($decoded['type'] ?? null) !== 'presence' || ($decoded['event'] ?? null) !== 'update') {
+                continue;
+            }
+
+            if (($decoded['user']['id'] ?? null) !== $this->userId1) {
+                continue;
+            }
+
+            $presenceUpdate = $decoded;
+            break;
+        }
+
+        $this->assertNotNull($presenceUpdate, 'Expected a lobby presence update when a player joins a game');
+        $this->assertSame('in_game', $presenceUpdate['user']['status'] ?? null);
+        $this->assertSame($this->tableId, $presenceUpdate['user']['active_table_id'] ?? null);
+        $this->assertSame('player1', $presenceUpdate['user']['username'] ?? null);
+    }
+
+    public function testPeriodicDisconnectSweepMarksPlayerAwayWithoutFollowUpMessages(): void
+    {
+        $loop = new WebSocketTestLoop();
+        $gameSocket = new GameSocket($this->pdo, null, $loop);
+
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
+        $gameSocket->onOpen($conn1);
+        $gameSocket->onAuthenticated($conn1);
+        $gameSocket->onOpen($conn2);
+        $gameSocket->onAuthenticated($conn2);
+
+        $this->assertCount(1, $loop->periodicTimers, 'Expected GameSocket to register a periodic disconnect sweep');
+
+        $conn2->sentMessages = [];
+        $gameSocket->onClose($conn1);
+
+        $reflection = new ReflectionClass($gameSocket);
+        $pendingDisconnects = $reflection->getProperty('pendingDisconnects');
+        $pendingDisconnects->setAccessible(true);
+
+        $timers = $pendingDisconnects->getValue($gameSocket);
+        $this->assertArrayHasKey($this->tableId, $timers);
+        $this->assertArrayHasKey($this->userId1, $timers[$this->tableId]);
+
+        $timers[$this->tableId][$this->userId1]['timestamp'] = 0.0;
+        $pendingDisconnects->setValue($gameSocket, $timers);
+
+        $loop->runPeriodicTimers();
+
+        $awayMessage = null;
+        foreach ($conn2->sentMessages as $message) {
+            $decoded = json_decode($message, true);
+            if (($decoded['type'] ?? null) === 'PLAYER_AWAY') {
+                $awayMessage = $decoded;
+                break;
+            }
+        }
+
+        $this->assertNotNull($awayMessage, 'Expected periodic disconnect sweep to broadcast PLAYER_AWAY');
+        $this->assertSame(1, $awayMessage['seat_no'] ?? null);
+        $this->assertSame('player1', $awayMessage['username'] ?? null);
     }
 }
 

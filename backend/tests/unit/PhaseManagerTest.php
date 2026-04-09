@@ -44,10 +44,9 @@ final class PhaseManagerTest extends TestCase
     }
 
     /**
-     * Test phase manager resets bets and actedThisStreet
-     * Scenario 11: PhaseManager Resets Bets and ActedThisStreet
+     * Test phase manager preserves betting state and only deals cards/action order.
      */
-    public function test_phase_manager_resets_bets_and_acted_this_street(): void
+    public function test_phase_manager_preserves_bets_and_acted_this_street(): void
     {
         // Setup: 2 players with bets = 100, actedThisStreet = true
         $player1 = $this->makePlayerState(1, 1000, ['bet' => 100, 'actedThisStreet' => true]);
@@ -61,13 +60,12 @@ final class PhaseManagerTest extends TestCase
         // Deal flop
         $result = PhaseManager::dealFlop($dealer, $players, $dealerSeat);
         
-        // Verify bets reset
-        $this->assertEquals(0, $player1->bet, 'Player 1 bet should be reset to 0');
-        $this->assertEquals(0, $player2->bet, 'Player 2 bet should be reset to 0');
+        // Verify betting state is preserved for PhaseEngine to reset later
+        $this->assertEquals(100, $player1->bet, 'Player 1 bet should be left unchanged');
+        $this->assertEquals(100, $player2->bet, 'Player 2 bet should be left unchanged');
         
-        // Verify actedThisStreet reset
-        $this->assertFalse($player1->actedThisStreet, 'Player 1 actedThisStreet should be reset to false');
-        $this->assertFalse($player2->actedThisStreet, 'Player 2 actedThisStreet should be reset to false');
+        $this->assertTrue($player1->actedThisStreet, 'Player 1 actedThisStreet should be preserved');
+        $this->assertTrue($player2->actedThisStreet, 'Player 2 actedThisStreet should be preserved');
         
         // Verify board has 3 cards
         $this->assertCount(3, $result['board'], 'Flop should have 3 cards');
@@ -81,13 +79,11 @@ final class PhaseManagerTest extends TestCase
         // Deal turn
         $result = PhaseManager::dealTurn($dealer, $players, $result['board'], $dealerSeat);
         
-        // Verify bets reset again
-        $this->assertEquals(0, $player1->bet, 'Player 1 bet should be reset to 0 after turn');
-        $this->assertEquals(0, $player2->bet, 'Player 2 bet should be reset to 0 after turn');
+        $this->assertEquals(50, $player1->bet, 'Player 1 bet should remain unchanged after turn');
+        $this->assertEquals(50, $player2->bet, 'Player 2 bet should remain unchanged after turn');
         
-        // Verify actedThisStreet reset again
-        $this->assertFalse($player1->actedThisStreet, 'Player 1 actedThisStreet should be reset to false after turn');
-        $this->assertFalse($player2->actedThisStreet, 'Player 2 actedThisStreet should be reset to false after turn');
+        $this->assertTrue($player1->actedThisStreet, 'Player 1 actedThisStreet should remain unchanged after turn');
+        $this->assertTrue($player2->actedThisStreet, 'Player 2 actedThisStreet should remain unchanged after turn');
         
         // Verify board has 4 cards
         $this->assertCount(4, $result['board'], 'Turn should add 1 card to board');

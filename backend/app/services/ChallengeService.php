@@ -26,13 +26,13 @@ final class ChallengeService {
             return ['ok' => false, 'message' => 'Cannot challenge yourself'];
         }
 
+        if (db_challenge_pending_exists($this->pdo, $fromUserId, $toUserId)) {
+            return ['ok' => false, 'message' => 'Challenge already pending'];
+        }
+
         // Check if user already has a pending challenge sent to anyone
         if (db_user_has_pending_challenge_sent($this->pdo, $fromUserId)) {
             return ['ok' => false, 'message' => 'You already have a pending challenge. Please wait for a response or cancel it before sending another challenge.'];
-        }
-
-        if (db_challenge_pending_exists($this->pdo, $fromUserId, $toUserId)) {
-            return ['ok' => false, 'message' => 'Challenge already pending'];
         }
 
         if (db_reverse_challenge_pending_exists($this->pdo, $fromUserId, $toUserId)) {
@@ -88,8 +88,11 @@ final class ChallengeService {
             return ['ok' => false, 'message' => 'Failed to create game table'];
         }
 
-        // Use transaction to ensure consistency
-        $this->pdo->beginTransaction();
+        $startedTransaction = false;
+        if (!$this->pdo->inTransaction()) {
+            $this->pdo->beginTransaction();
+            $startedTransaction = true;
+        }
         
         try {
             // Seat both players
@@ -97,7 +100,9 @@ final class ChallengeService {
             $seat2 = db_seat_player($this->pdo, $tableId, 2, $toUserId);
             
             if (!$seat1 || !$seat2) {
-                $this->pdo->rollBack();
+                if ($startedTransaction && $this->pdo->inTransaction()) {
+                    $this->pdo->rollBack();
+                }
                 // Cleanup: mark table as closed if seating failed
                 db_update_table_status($this->pdo, $tableId, 'CLOSED');
                 return ['ok' => false, 'message' => 'Failed to seat players'];
@@ -107,34 +112,12 @@ final class ChallengeService {
             // For now, use seat 1 as dealer, seat 1 as SB, seat 2 as BB
             // These will be properly set when startHand() is called
             $deckSeed = mt_rand();
-            
-            // Diagnostic logging before call
-            fwrite(STDERR, "[ChallengeService] About to call db_create_game with:\n");
-            fwrite(STDERR, "  - pdo: " . (is_object($this->pdo) ? get_class($this->pdo) : gettype($this->pdo)) . "\n");
-            fwrite(STDERR, "  - tableId: " . var_export($tableId, true) . " (type: " . gettype($tableId) . ")\n");
-            fwrite(STDERR, "  - dealerSeat: 1 (int)\n");
-            fwrite(STDERR, "  - sbSeat: 1 (int)\n");
-            fwrite(STDERR, "  - bbSeat: 2 (int)\n");
-            fwrite(STDERR, "  - deckSeed: " . var_export($deckSeed, true) . " (type: " . gettype($deckSeed) . ")\n");
-            fwrite(STDERR, "[ChallengeService] Total arguments: 6\n");
-            
-            try {
-                $gameId = db_create_game($this->pdo, $tableId, 1, 1, 2, $deckSeed);
-                fwrite(STDERR, "[ChallengeService] db_create_game returned: " . var_export($gameId, true) . "\n");
-            } catch (\PDOException $e) {
-                fwrite(STDERR, "[ChallengeService] db_create_game PDOException: " . $e->getMessage() . "\n");
-                fwrite(STDERR, "[ChallengeService] Exception trace: " . $e->getTraceAsString() . "\n");
-                error_log("[ChallengeService] db_create_game exception: " . $e->getMessage());
-                throw $e;
-            } catch (\Throwable $e) {
-                fwrite(STDERR, "[ChallengeService] db_create_game Throwable: " . $e->getMessage() . "\n");
-                fwrite(STDERR, "[ChallengeService] Exception class: " . get_class($e) . "\n");
-                error_log("[ChallengeService] db_create_game exception: " . $e->getMessage());
-                throw $e;
-            }
+            $gameId = db_create_game($this->pdo, $tableId, 1, 1, 2, $deckSeed);
             
             if (!$gameId) {
-                $this->pdo->rollBack();
+                if ($startedTransaction && $this->pdo->inTransaction()) {
+                    $this->pdo->rollBack();
+                }
                 db_update_table_status($this->pdo, $tableId, 'CLOSED');
                 return ['ok' => false, 'message' => 'Failed to create game record'];
             }
@@ -144,18 +127,14 @@ final class ChallengeService {
             $stmt = $this->pdo->prepare("UPDATE game_challenges SET game_id = ? WHERE id = ?");
             $stmt->execute([$gameId, $challengeId]);
             
-            $this->pdo->commit();
+            if ($startedTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->commit();
+            }
         } catch (\Throwable $e) {
-            $this->pdo->rollBack();
+            if ($startedTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
             db_update_table_status($this->pdo, $tableId, 'CLOSED');
-            // Aggressive logging to stderr
-            fwrite(STDERR, "\n========== CHALLENGE ACCEPT ERROR ==========\n");
-            fwrite(STDERR, "[ChallengeService] Exception caught in outer catch block\n");
-            fwrite(STDERR, "[ChallengeService] Exception class: " . get_class($e) . "\n");
-            fwrite(STDERR, "[ChallengeService] Exception message: " . $e->getMessage() . "\n");
-            fwrite(STDERR, "[ChallengeService] Exception code: " . $e->getCode() . "\n");
-            fwrite(STDERR, "[ChallengeService] Exception trace:\n" . $e->getTraceAsString() . "\n");
-            fwrite(STDERR, "==========================================\n\n");
             error_log("[ChallengeService] Error accepting challenge: " . $e->getMessage());
             return ['ok' => false, 'message' => 'Failed to create game: ' . $e->getMessage()];
         }

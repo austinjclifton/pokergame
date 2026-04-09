@@ -5,29 +5,32 @@
 // Responsibilities:
 //   • Manage live connections for chat + challenges
 //   • Announce user join/leave based on presence transitions (not mere reconnects)
-//   • Read/write presence via PresenceService (DAL-backed)
+//   • Read/write presence via SocketPresenceService
 //   • No polling required on the client
 // -----------------------------------------------------------------------------
 
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
 
-require_once __DIR__ . '/../app/services/PresenceService.php';
+require_once __DIR__ . '/../app/services/SocketPresenceService.php';
 require_once __DIR__ . '/../app/services/SubscriptionService.php';
 require_once __DIR__ . '/../app/services/ChallengeService.php';
 require_once __DIR__ . '/../app/services/AuditService.php';
 require_once __DIR__ . '/../app/db/chat_messages.php';
+require_once __DIR__ . '/../app/db/challenges.php';
 require_once __DIR__ . '/../app/db/users.php';
 require_once __DIR__ . '/../app/db/table_seats.php';
-require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../lib/security.php';
+require_once __DIR__ . '/../lib/TokenBucketRateLimiter.php';
+require_once __DIR__ . '/../lib/WebSocketLog.php';
+require_once __DIR__ . '/../lib/WebSocketJson.php';
 
 class LobbySocket implements MessageComponentInterface
 {
     /** @var \SplObjectStorage<ConnectionInterface, null> */
     protected \SplObjectStorage $clients;
     protected PDO $pdo;
-    protected PresenceService $presenceService;
+    protected SocketPresenceService $presenceService;
     protected SubscriptionService $subscriptionService;
     protected ChallengeService $challengeService;
 
@@ -39,8 +42,8 @@ class LobbySocket implements MessageComponentInterface
     protected array $connInfo = [];
 
     /**
-     * Track when users disconnect to detect reconnects (page refreshes)
-     * [user_id => ['time' => timestamp, 'username' => string]]
+     * Track recent disconnects to detect quick reconnects (page refreshes)
+     * [user_id => ['timestamp' => float, 'username' => string]]
      * @var array<int, array>
      */
     protected array $recentDisconnects = [];
@@ -57,15 +60,16 @@ class LobbySocket implements MessageComponentInterface
     private const RATE_TOKENS       = 5.0;
     private const RATE_REFILL_PER_S = 1.5;
     private const JOIN_HISTORY_SIZE = 20;
+    private const QUICK_RECONNECT_WINDOW_S = 5.0;
 
     public function __construct(PDO $pdo)
     {
         $this->clients             = new \SplObjectStorage;
         $this->pdo                 = $pdo;
-        $this->presenceService     = new PresenceService($pdo);
+        $this->presenceService     = new SocketPresenceService($pdo);
         $this->subscriptionService = new SubscriptionService($pdo);
         $this->challengeService    = new ChallengeService($pdo);
-        echo "💬 LobbySocket initialized (presence-aware)\n";
+        WebSocketLog::debug('LobbySocket', 'Initialized (presence-aware)');
     }
 
     // -------------------------------------------------------------------------
@@ -77,9 +81,9 @@ class LobbySocket implements MessageComponentInterface
             $this->clients->attach($conn);
 
             if (!isset($conn->userCtx) || !is_array($conn->userCtx)) {
-                $conn->send(json_encode(['type' => 'error', 'error' => 'unauthorized']));
+                $this->sendError($conn, 'unauthorized');
                 $this->clients->detach($conn);
-                $conn->close();
+                WebSocketJson::closeQuietly($conn);
                 return;
             }
 
@@ -92,7 +96,7 @@ class LobbySocket implements MessageComponentInterface
                 'user_id'    => $uid,
                 'username'   => $uname,
                 'session_id' => $sid,
-                'rate'       => ['ts' => time(), 'tokens' => self::RATE_TOKENS],
+                'rate'       => TokenBucketRateLimiter::seed(self::RATE_TOKENS),
             ];
 
             $this->subscriptionService->register($uid, (string)$rid, 'lobby', 0);
@@ -113,58 +117,13 @@ class LobbySocket implements MessageComponentInterface
                     'severity' => 'info',
                 ]);
             } catch (\Throwable $e) {
-                error_log('[LobbySocket] Audit logging failed: ' . $e->getMessage());
+                WebSocketLog::warn('LobbySocket', 'Audit logging failed on connect: ' . $e->getMessage());
             }
 
-            // Check presence before marking online to detect stale records
-            require_once __DIR__ . '/../app/db/presence.php';
-            $presenceBefore = db_get_user_presence($this->pdo, $uid);
-            
-            // Check if user's presence record is stale (last seen > 2 minutes ago) OR missing
-            $isStalePresence = false;
-            if (!$presenceBefore) {
-                $isStalePresence = true;
-            } elseif ($presenceBefore['status'] === 'online') {
-                $lastSeen = strtotime($presenceBefore['last_seen_at']);
-                $secondsSinceLastSeen = time() - $lastSeen;
-                if ($secondsSinceLastSeen > 120) { // 2 minutes
-                    $isStalePresence = true;
-                }
-            }
-            
-            // Check if user has an active game before marking them online
-            // If they're in a game, they should stay as 'in_game', not be set to 'online'
-            // CRITICAL: Only check for active game if their current status is already 'in_game'
-            // If they're 'online', they've already disconnected from the game, so don't override it
-            $hasActiveGame = false;
-            $currentStatus = $presenceBefore ? ($presenceBefore['status'] ?? 'online') : 'online';
-            
-            // Only check for active game if user is currently 'in_game'
-            // If they're already 'online', they've disconnected from the game, so keep them as 'online'
-            if ($currentStatus === 'in_game') {
-                try {
-                    $activeTableId = db_find_active_table_for_user($this->pdo, $uid);
-                    $hasActiveGame = $activeTableId !== null;
-                    error_log("[LobbySocket] User {$uid} ({$uname}) has status 'in_game', checked active game: " . ($hasActiveGame ? "YES (table #{$activeTableId})" : "NO"));
-                } catch (\Throwable $e) {
-                    error_log("[LobbySocket] Error checking active game for user {$uid}: " . $e->getMessage());
-                }
-            } else {
-                error_log("[LobbySocket] User {$uid} ({$uname}) has status '{$currentStatus}', not checking for active game (already disconnected)");
-            }
-            
-            // Only mark as 'in_game' if they have an active game AND were already 'in_game'
-            // If they're 'online', they've already disconnected, so keep them as 'online'
-            if ($hasActiveGame && $currentStatus === 'in_game') {
-                $becameOnline = $this->presenceService->markInGame($uid, $uname);
-            } else {
-                // Mark as 'online' - either they don't have an active game, or they've already disconnected
-                $becameOnline = $this->presenceService->markOnline($uid, $uname);
-            }
-            $shouldTreatAsNewLogin = $becameOnline || $isStalePresence;
+            $presenceUser = $this->presenceService->syncLobbyConnection($uid, $uname);
 
             $recent = db_get_recent_chat_messages($this->pdo, 'lobby', 0, self::JOIN_HISTORY_SIZE);
-            $conn->send(json_encode([
+            $this->sendJson($conn, [
                 'type' => 'history',
                 'messages' => array_map(fn($m) => [
                     'from' => escape_html($m['sender_username']),
@@ -172,135 +131,38 @@ class LobbySocket implements MessageComponentInterface
                     'time' => date('H:i', strtotime($m['created_at'])),
                     'created_at' => $m['created_at'], // Include full timestamp for 12-hour filtering
                 ], $recent),
-            ]));
+            ]);
 
-            // Get all users with any status (online, in_game, etc.) for the player list
-            // Include active table_id if user is in an active game
-            $stmt = $this->pdo->query("
-                SELECT 
-                    ulp.user_id, 
-                    ulp.user_username, 
-                    ulp.status, 
-                    ulp.last_seen_at
-                FROM user_lobby_presence ulp
-                WHERE ulp.status IN ('online', 'in_game')
-                ORDER BY ulp.user_username
-            ");
-            $allUsers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $usersWithTables = $this->presenceService->listVisibleUsers();
             
-            // Fetch active table for each user (using the function we created)
-            $usersWithTables = [];
-            foreach ($allUsers as $u) {
-                try {
-                    $activeTableId = db_find_active_table_for_user($this->pdo, (int)$u['user_id']);
-                } catch (\Throwable $e) {
-                    error_log("[LobbySocket] Error fetching active table for user {$u['user_id']}: " . $e->getMessage());
-                    $activeTableId = null; // Fallback to null on error
-                }
-                $usersWithTables[] = [
-                    'id'       => (int)$u['user_id'],
-                    'username' => escape_html($u['user_username']),
-                    'status'   => $u['status'] ?? 'online',
-                    'active_table_id' => $activeTableId, // null if not in active game
-                ];
-            }
-            
-            $conn->send(json_encode([
+            $this->sendJson($conn, [
                 'type'  => 'online_users',
                 'users' => $usersWithTables,
-            ]));
+            ]);
 
-            // Check if user has other active connections
-            $hasOtherConnections = false;
-            foreach ($this->connInfo as $otherRid => $otherInfo) {
-                if ($otherInfo['user_id'] === $uid && $otherRid !== $rid) {
-                    $hasOtherConnections = true;
-                    break;
-                }
-            }
-            
-            // Check if this is a quick reconnect (page refresh) - within 5 seconds
-            $isQuickReconnect = false;
-            $wasInRecentDisconnects = isset($this->recentDisconnects[$uid]);
-            
-            if ($wasInRecentDisconnects) {
-                $disconnectInfo = $this->recentDisconnects[$uid];
-                $secondsSinceDisconnect = time() - $disconnectInfo['time'];
-                if ($secondsSinceDisconnect < 5) {
-                    $isQuickReconnect = true;
-                    unset($this->recentDisconnects[$uid]);
-                } else {
-                    unset($this->recentDisconnects[$uid]);
-                }
-            }
-            
-            // Clean up old disconnect records (older than 5 seconds) and send delayed leave messages
-            $now = time();
-            foreach ($this->recentDisconnects as $oldUid => $oldInfo) {
-                if ($oldUid === $uid) continue;
-                $secondsSince = $now - $oldInfo['time'];
-                if ($secondsSince >= 5) {
-                    $escapedOldUsername = escape_html($oldInfo['username']);
-                    $this->broadcast([
-                        'type'   => 'chat',
-                        'system' => true,
-                        'msg'    => "🔴 {$escapedOldUsername} left the lobby.",
-                        'time'   => date('H:i'),
-                        'created_at' => date('Y-m-d H:i:s'),
-                    ]);
-                    $this->broadcast([
-                        'type'   => 'presence',
-                        'event'  => 'leave',
-                        'user'   => ['id' => $oldUid, 'username' => $escapedOldUsername],
-                    ]);
-                    unset($this->recentDisconnects[$oldUid]);
-                }
-            }
-            
-            // Always broadcast presence event when user connects (for player list updates)
-            try {
-                $userActiveTable = db_find_active_table_for_user($this->pdo, $uid);
-            } catch (\Throwable $e) {
-                error_log("[LobbySocket] Error fetching active table for user {$uid}: " . $e->getMessage());
-                $userActiveTable = null; // Fallback to null on error
-            }
-            
-            // Get user status from presence record (use presenceBefore if available, otherwise default to 'online')
-            $userStatus = $presenceBefore ? ($presenceBefore['status'] ?? 'online') : 'online';
-            
+            $hasOtherConnections = $this->hasOtherActiveConnections($uid, $rid);
+            $isQuickReconnect = $this->consumeQuickReconnect($uid);
+            $this->flushExpiredDisconnectAnnouncements($uid);
+
             $this->broadcastExcept($conn, [
                 'type'   => 'presence',
                 'event'  => 'join',
-                'user'   => [
-                    'id' => $uid, 
-                    'username' => escape_html($uname),
-                    'status' => $userStatus,
-                    'active_table_id' => $userActiveTable,
-                ],
-                'online' => count($allUsers),
+                'user'   => $presenceUser,
+                'online' => count($usersWithTables),
             ]);
             
             // Show join chat message when user doesn't have other connections and it's not a quick reconnect
-            $shouldShowJoinMessage = !$hasOtherConnections && !$isQuickReconnect;
-            
-            if ($shouldShowJoinMessage) {
-                $escapedUname = escape_html($uname);
-                $this->broadcastExcept($conn, [
-                    'type'   => 'chat',
-                    'system' => true,
-                    'msg'    => "🟢 {$escapedUname} joined the lobby.",
-                    'time'   => date('H:i'),
-                    'created_at' => date('Y-m-d H:i:s'),
-                ]);
+            if (!$hasOtherConnections && !$isQuickReconnect) {
+                $this->broadcastLobbyJoin($uname, $conn);
             }
 
-            echo "🟢 {$uname} connected\n";
+            WebSocketLog::debug('LobbySocket', "{$uname} connected");
 
         } catch (\Throwable $e) {
-            error_log("[WS:onOpen] " . $e->getMessage());
-            $conn->send(json_encode(['type' => 'error', 'error' => 'connection_failed']));
+            WebSocketLog::error('LobbySocket', 'onOpen failed: ' . $e->getMessage());
+            $this->sendError($conn, 'connection_failed');
             $this->clients->detach($conn);
-            $conn->close();
+            WebSocketJson::closeQuietly($conn);
         }
     }
 
@@ -313,13 +175,13 @@ class LobbySocket implements MessageComponentInterface
         $info = $this->connInfo[$rid] ?? null;
 
         if (!$info) {
-            $from->send(json_encode(['type' => 'error', 'error' => 'unauthorized']));
-            $from->close();
+            $this->sendError($from, 'unauthorized');
+            WebSocketJson::closeQuietly($from);
             return;
         }
 
         if (!is_string($msg) || strlen($msg) > self::MAX_MSG_BYTES) {
-            $from->send(json_encode(['type' => 'error', 'error' => 'payload_too_large']));
+            $this->sendError($from, 'payload_too_large');
             return;
         }
 
@@ -338,348 +200,297 @@ class LobbySocket implements MessageComponentInterface
                     'severity' => 'warn',
                 ]);
             } catch (\Throwable $e) {
-                error_log('[LobbySocket] Audit logging failed: ' . $e->getMessage());
+                WebSocketLog::warn('LobbySocket', 'Audit logging failed on rate limit: ' . $e->getMessage());
             }
-            $from->send(json_encode(['type' => 'error', 'error' => 'rate_limited']));
+            $this->sendError($from, 'rate_limited');
             return;
         }
 
         $data = json_decode($msg, true);
         if (!is_array($data) || !isset($data['type'])) {
-            $from->send(json_encode(['type' => 'error', 'error' => 'invalid_payload']));
+            $this->sendError($from, 'invalid_payload');
             return;
         }
 
-        $type  = $data['type'];
-        $uid   = (int)$info['user_id'];
-        $uname = $info['username'];
-
-        switch ($type) {
-            // Keep socket + presence heartbeat fresh
+        switch ($data['type']) {
             case 'ping':
-                $this->subscriptionService->ping((string)$rid);
-                $this->presenceService->updateHeartbeat($uid);
-                $from->send(json_encode(['type' => 'pong']));
+                $this->handlePing($from, $rid, (int) $info['user_id']);
                 break;
 
-            // Public chat in the lobby
             case 'chat':
-                $text = trim(mb_substr((string)($data['msg'] ?? ''), 0, self::CHAT_MAX_CHARS));
-                if ($text === '') {
-                    $from->send(json_encode(['type' => 'error', 'error' => 'empty_message']));
-                    break;
-                }
-                $msgId = db_insert_chat_message($this->pdo, 'lobby', 0, $uid, $text, null, $uname);
-                
-                // Audit log: chat message sent
-                try {
-                    log_audit_event($this->pdo, [
-                        'user_id' => $uid,
-                        'session_id' => $info['session_id'],
-                        'action' => 'chat.send',
-                        'entity_type' => 'chat_message',
-                        'entity_id' => $msgId,
-                        'details' => [
-                            'channel_type' => 'lobby',
-                            'channel_id' => 0,
-                            'message_length' => mb_strlen($text),
-                        ],
-                        'channel' => 'websocket',
-                        'status' => 'success',
-                        'severity' => 'info',
-                    ]);
-                } catch (\Throwable $e) {
-                    error_log('[LobbySocket] Audit logging failed: ' . $e->getMessage());
-                }
-                
-                // Fetch the actual created_at timestamp from the database to ensure it matches
-                // what will be returned in history queries (MySQL's CURRENT_TIMESTAMP)
-                $stmt = $this->pdo->prepare("SELECT created_at FROM chat_messages WHERE id = :id LIMIT 1");
-                $stmt->execute(['id' => $msgId]);
-                $row = $stmt->fetch(PDO::FETCH_ASSOC);
-                $createdAt = $row ? $row['created_at'] : date('Y-m-d H:i:s');
-                
-                // Format time from the database timestamp
-                $timestamp = strtotime($createdAt);
-                $timeStr = date('H:i', $timestamp);
-                
-                // Broadcast with timestamp for 12-hour filtering
-                $this->broadcast([
-                    'type' => 'chat',
-                    'from' => escape_html($uname),
-                    'msg'  => escape_html($text),
-                    'time' => $timeStr,
-                    'created_at' => $createdAt, // Use actual database timestamp
-                ]);
+                $this->handleChat($from, $data, $info);
                 break;
 
-            // Explicit logout from client → announce & close socket
             case 'logout':
-                // Mark this as an explicit logout so onClose knows not to add to recentDisconnects
-                $this->explicitLogouts[$uid] = true;
-                
-                // Clear from recentDisconnects so they can log back in without being treated as a quick reconnect
-                if (isset($this->recentDisconnects[$uid])) {
-                    unset($this->recentDisconnects[$uid]);
-                }
-                
-                // Mark offline first
-                $becameOffline = $this->presenceService->markOffline($uid);
-                if ($becameOffline) {
-                    // Broadcast to other clients (but not the leaving user)
-                    $escapedUname = escape_html($uname);
-                    $this->broadcastExcept($from, [
-                        'type'   => 'chat',
-                        'system' => true,
-                        'msg'    => "🔴 {$escapedUname} left the lobby.",
-                        'time'   => date('H:i'),
-                        'created_at' => date('Y-m-d H:i:s'),
-                    ]);
-                    $this->broadcastExcept($from, [
-                        'type'  => 'presence',
-                        'event' => 'leave',
-                        'user'  => ['id' => $uid, 'username' => $escapedUname],
-                    ]);
-                }
-                // Disconnect subscription before closing
-                $this->subscriptionService->disconnect((string)$rid);
-                $from->close();
+                $this->handleLogout($from, $rid, (int) $info['user_id'], (string) $info['username']);
                 break;
 
-            // Send a challenge to another user
             case 'challenge':
-                $toUserId = (int)($data['to_user_id'] ?? 0);
-                if ($toUserId <= 0) {
-                    $from->send(json_encode(['type' => 'error', 'error' => 'invalid_target']));
-                    break;
-                }
-                $targetUser = db_get_user_by_id($this->pdo, $toUserId);
-                if (!$targetUser) {
-                    $from->send(json_encode(['type' => 'error', 'error' => 'user_not_found']));
-                    break;
-                }
-                $result = $this->challengeService->send($uid, $targetUser['username']);
-                if (!$result['ok']) {
-                    $from->send(json_encode([
-                        'type' => 'error',
-                        'error' => $result['message'] ?? 'Failed to send challenge'
-                    ]));
-                    break;
-                }
-                $escapedTargetUsername = escape_html($targetUser['username']);
-                $challengeId = (int)($result['challenge_id'] ?? 0);
-                
-                // Send challenge notification to target user
-                $this->sendToUser($toUserId, [
-                    'type'         => 'challenge',
-                    'from'         => ['id' => $uid, 'username' => escape_html($uname)],
-                    'challenge_id' => $challengeId,
-                ]);
-                
-                // Send confirmation to sender with challenge details
-                $from->send(json_encode([
-                    'type' => 'challenge_sent',
-                    'to'   => ['id' => $toUserId, 'username' => $escapedTargetUsername],
-                    'challenge_id' => $challengeId,
-                ]));
-                // Send chat notification to sender
-                $from->send(json_encode([
-                    'type'   => 'chat',
-                    'system' => true,
-                    'msg'    => "✅ Challenge sent to {$escapedTargetUsername}.",
-                    'time'   => date('H:i'),
-                    'created_at' => date('Y-m-d H:i:s'),
-                ]));
-                echo "🎮 {$uname} challenged {$escapedTargetUsername}\n";
+                $this->handleChallenge($from, $data, (int) $info['user_id'], (string) $info['username']);
                 break;
 
-            // Accept/decline a challenge
             case 'challenge_response':
-                $challengeId = (int)($data['challenge_id'] ?? 0);
-                $action      = trim((string)($data['action'] ?? ''));
-                if ($challengeId <= 0 || !in_array($action, ['accept', 'decline'], true)) {
-                    $from->send(json_encode(['type' => 'error', 'error' => 'invalid_challenge_response']));
-                    break;
-                }
-                
-                // Get challenge details to know who sent it
-                require_once __DIR__ . '/../app/db/challenges.php';
-                $challenge = db_get_challenge_for_accept($this->pdo, $challengeId);
-                if (!$challenge) {
-                    $from->send(json_encode(['type' => 'error', 'error' => 'challenge_not_found']));
-                    break;
-                }
-                
-                $fromUserId = (int)$challenge['from_user_id'];
-                $toUserId = (int)$challenge['to_user_id'];
-                $fromUsername = db_get_username_by_id($this->pdo, $fromUserId) ?? "User#$fromUserId";
-                $escapedFromUsername = escape_html($fromUsername);
-                
-                $result = $action === 'accept'
-                    ? $this->challengeService->accept($challengeId, $uid)
-                    : $this->challengeService->decline($challengeId, $uid);
-
-                if (!$result['ok']) {
-                    $from->send(json_encode(['type' => 'error', 'error' => $result['message']]));
-                    error_log("[LobbySocket] Challenge response failed: " . ($result['message'] ?? 'Unknown error'));
-                    break;
-                }
-
-                // Send chat notification to the person who responded
-                if ($action === 'decline') {
-                    $from->send(json_encode([
-                        'type'   => 'chat',
-                        'system' => true,
-                        'msg'    => "❌ You declined the challenge from {$escapedFromUsername}.",
-                        'time'   => date('H:i'),
-                        'created_at' => date('Y-m-d H:i:s'),
-                    ]));
-                }
-
-                // Broadcast challenge response to all (for challenge list updates)
-                $this->broadcast([
-                    'type'         => 'challenge_response',
-                    'challenge_id' => $challengeId,
-                    'action'       => $action,
-                    'from'         => ['id' => $uid, 'username' => escape_html($uname)],
-                    'table_id'     => $result['table_id'] ?? null,
-                ]);
-                
-                // Send challenge_resolved to both users to clear their pending state
-                $this->sendToUser($fromUserId, [
-                    'type'         => 'challenge_resolved',
-                    'challenge_id' => $challengeId,
-                    'action'       => $action,
-                ]);
-                $this->sendToUser($toUserId, [
-                    'type'         => 'challenge_resolved',
-                    'challenge_id' => $challengeId,
-                    'action'       => $action,
-                ]);
-                
-                // If challenge was accepted, redirect both users to the game table
-                if ($action === 'accept') {
-                    $tableId = isset($result['table_id']) ? (int)$result['table_id'] : null;
-                    $gameId = isset($result['game_id']) ? (int)$result['game_id'] : null;
-                    
-                    if ($tableId && $gameId) {
-                        $escapedUname = escape_html($uname);
-                        
-                        // Send GAME_START message to both players
-                        $gameStartMessage = [
-                            'type' => 'GAME_START',
-                            'table_id' => $tableId,
-                            'game_id' => $gameId,
-                            'message' => 'Challenge accepted! Starting game...',
-                        ];
-                        
-                        $this->sendToUser($fromUserId, $gameStartMessage);
-                        $this->sendToUser($toUserId, $gameStartMessage);
-                        
-                        // Also send chat notifications
-                        $this->sendToUser($fromUserId, [
-                            'type'   => 'chat',
-                            'system' => true,
-                            'msg'    => "✅ {$escapedUname} accepted your challenge! Starting game...",
-                            'time'   => date('H:i'),
-                            'created_at' => date('Y-m-d H:i:s'),
-                        ]);
-                        
-                        $from->send(json_encode([
-                            'type'   => 'chat',
-                            'system' => true,
-                            'msg'    => "✅ You accepted the challenge from {$escapedFromUsername}! Starting game...",
-                            'time'   => date('H:i'),
-                            'created_at' => date('Y-m-d H:i:s'),
-                        ]));
-                        
-                        echo "[INFO] Challenge #{$challengeId} accepted - Created table #{$tableId}, game #{$gameId} for users {$fromUserId} and {$toUserId}\n";
-                    } else {
-                        error_log("[LobbySocket] Challenge accepted but missing table_id or game_id. Result: " . json_encode($result));
-                    }
-                } else if ($action === 'decline' && $fromUserId !== $uid) {
-                    // Send chat notification to the original challenger if declined
-                    $escapedUname = escape_html($uname);
-                    $this->sendToUser($fromUserId, [
-                        'type'   => 'chat',
-                        'system' => true,
-                        'msg'    => "❌ {$escapedUname} declined your challenge.",
-                        'time'   => date('H:i'),
-                        'created_at' => date('Y-m-d H:i:s'),
-                    ]);
-                    echo "❌ {$uname} declined challenge from {$escapedFromUsername}\n";
-                }
+                $this->handleChallengeResponse($from, $data, (int) $info['user_id'], (string) $info['username']);
                 break;
 
-            // Cancel a challenge (sender cancels their own challenge)
             case 'challenge_cancel':
-                $challengeId = (int)($data['challenge_id'] ?? 0);
-                if ($challengeId <= 0) {
-                    $from->send(json_encode(['type' => 'error', 'error' => 'invalid_challenge_id']));
-                    break;
-                }
-                
-                require_once __DIR__ . '/../app/db/challenges.php';
-                $challenge = db_get_challenge_for_accept($this->pdo, $challengeId);
-                if (!$challenge) {
-                    $from->send(json_encode(['type' => 'error', 'error' => 'challenge_not_found']));
-                    break;
-                }
-                
-                $fromUserId = (int)$challenge['from_user_id'];
-                $toUserId = (int)$challenge['to_user_id'];
-                $toUsername = db_get_username_by_id($this->pdo, $toUserId) ?? "User#$toUserId";
-                $escapedToUsername = escape_html($toUsername);
-                
-                $result = $this->challengeService->cancel($challengeId, $uid);
-                if (!$result['ok']) {
-                    $from->send(json_encode(['type' => 'error', 'error' => $result['message']]));
-                    break;
-                }
-
-                // Send chat notification to the person who canceled
-                $from->send(json_encode([
-                    'type'   => 'chat',
-                    'system' => true,
-                    'msg'    => "❌ You canceled your challenge to {$escapedToUsername}.",
-                    'time'   => date('H:i'),
-                    'created_at' => date('Y-m-d H:i:s'),
-                ]));
-
-                // Notify the target user that the challenge was canceled
-                $this->sendToUser($toUserId, [
-                    'type'   => 'chat',
-                    'system' => true,
-                    'msg'    => "❌ {$uname} canceled their challenge to you.",
-                    'time'   => date('H:i'),
-                    'created_at' => date('Y-m-d H:i:s'),
-                ]);
-
-                // Broadcast challenge cancel to all (for challenge list updates)
-                $this->broadcast([
-                    'type'         => 'challenge_cancel',
-                    'challenge_id' => $challengeId,
-                    'from'         => ['id' => $uid, 'username' => escape_html($uname)],
-                ]);
-                
-                // Send challenge_resolved to both users to clear their pending state
-                $this->sendToUser($fromUserId, [
-                    'type'         => 'challenge_resolved',
-                    'challenge_id' => $challengeId,
-                    'action'       => 'cancelled',
-                ]);
-                $this->sendToUser($toUserId, [
-                    'type'         => 'challenge_resolved',
-                    'challenge_id' => $challengeId,
-                    'action'       => 'cancelled',
-                ]);
-                
-                echo "❌ {$uname} canceled challenge to {$escapedToUsername}\n";
+                $this->handleChallengeCancel($from, $data, (int) $info['user_id'], (string) $info['username']);
                 break;
 
             default:
-                $from->send(json_encode(['type' => 'error', 'error' => 'unknown_type', 'got' => $type]));
+                $this->sendError($from, 'unknown_type', ['got' => $data['type']]);
         }
+    }
+
+    private function handlePing(ConnectionInterface $conn, int $rid, int $userId): void
+    {
+        $this->subscriptionService->ping((string) $rid);
+        $this->presenceService->updateHeartbeat($userId);
+        $this->sendJson($conn, ['type' => 'pong']);
+    }
+
+    /** @param array<string, mixed> $data
+     *  @param array<string, mixed> $info
+     */
+    private function handleChat(ConnectionInterface $conn, array $data, array $info): void
+    {
+        $userId = (int) $info['user_id'];
+        $username = (string) $info['username'];
+        $text = trim(mb_substr((string) ($data['msg'] ?? ''), 0, self::CHAT_MAX_CHARS));
+
+        if ($text === '') {
+            $this->sendError($conn, 'empty_message');
+            return;
+        }
+
+        $messageId = db_insert_chat_message($this->pdo, 'lobby', 0, $userId, $text, null, $username);
+
+        try {
+            log_audit_event($this->pdo, [
+                'user_id' => $userId,
+                'session_id' => $info['session_id'],
+                'action' => 'chat.send',
+                'entity_type' => 'chat_message',
+                'entity_id' => $messageId,
+                'details' => [
+                    'channel_type' => 'lobby',
+                    'channel_id' => 0,
+                    'message_length' => mb_strlen($text),
+                ],
+                'channel' => 'websocket',
+                'status' => 'success',
+                'severity' => 'info',
+            ]);
+        } catch (\Throwable $e) {
+            WebSocketLog::warn('LobbySocket', 'Audit logging failed on chat: ' . $e->getMessage());
+        }
+
+        $statement = $this->pdo->prepare("SELECT created_at FROM chat_messages WHERE id = :id LIMIT 1");
+        $statement->execute(['id' => $messageId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        $createdAt = $row ? $row['created_at'] : date('Y-m-d H:i:s');
+        $timestamp = strtotime($createdAt);
+
+        $this->broadcast([
+            'type' => 'chat',
+            'from' => escape_html($username),
+            'msg' => escape_html($text),
+            'time' => date('H:i', $timestamp),
+            'created_at' => $createdAt,
+        ]);
+    }
+
+    private function handleLogout(ConnectionInterface $conn, int $rid, int $userId, string $username): void
+    {
+        $this->explicitLogouts[$userId] = true;
+        unset($this->recentDisconnects[$userId]);
+
+        $becameOffline = $this->presenceService->markOffline($userId);
+        if ($becameOffline) {
+            $this->broadcastLobbyLeave($userId, $username, $conn);
+        }
+
+        $this->subscriptionService->disconnect((string) $rid);
+        WebSocketJson::closeQuietly($conn);
+    }
+
+    /** @param array<string, mixed> $data */
+    private function handleChallenge(ConnectionInterface $conn, array $data, int $userId, string $username): void
+    {
+        $targetUserId = (int) ($data['to_user_id'] ?? 0);
+        if ($targetUserId <= 0) {
+            $this->sendError($conn, 'invalid_target');
+            return;
+        }
+
+        $targetUser = db_get_user_by_id($this->pdo, $targetUserId);
+        if (!$targetUser) {
+            $this->sendError($conn, 'user_not_found');
+            return;
+        }
+
+        $result = $this->challengeService->send($userId, $targetUser['username']);
+        if (!$result['ok']) {
+            $this->sendError($conn, (string) ($result['message'] ?? 'Failed to send challenge'));
+            return;
+        }
+
+        $escapedTargetUsername = escape_html($targetUser['username']);
+        $challengeId = (int) ($result['challenge_id'] ?? 0);
+
+        $this->sendToUser($targetUserId, [
+            'type' => 'challenge',
+            'from' => ['id' => $userId, 'username' => escape_html($username)],
+            'challenge_id' => $challengeId,
+        ]);
+
+        $this->sendJson($conn, [
+            'type' => 'challenge_sent',
+            'to' => ['id' => $targetUserId, 'username' => $escapedTargetUsername],
+            'challenge_id' => $challengeId,
+        ]);
+        $this->sendSystemChat($conn, "✅ Challenge sent to {$escapedTargetUsername}.");
+
+        WebSocketLog::debug('LobbySocket', "{$username} challenged {$escapedTargetUsername}");
+    }
+
+    /** @param array<string, mixed> $data */
+    private function handleChallengeResponse(ConnectionInterface $conn, array $data, int $userId, string $username): void
+    {
+        $challengeId = (int) ($data['challenge_id'] ?? 0);
+        $action = trim((string) ($data['action'] ?? ''));
+        if ($challengeId <= 0 || !in_array($action, ['accept', 'decline'], true)) {
+            $this->sendError($conn, 'invalid_challenge_response');
+            return;
+        }
+
+        $challenge = db_get_challenge_for_accept($this->pdo, $challengeId);
+        if (!$challenge) {
+            $this->sendError($conn, 'challenge_not_found');
+            return;
+        }
+
+        $fromUserId = (int) $challenge['from_user_id'];
+        $toUserId = (int) $challenge['to_user_id'];
+        $fromUsername = db_get_username_by_id($this->pdo, $fromUserId) ?? "User#$fromUserId";
+        $escapedFromUsername = escape_html($fromUsername);
+
+        $result = $action === 'accept'
+            ? $this->challengeService->accept($challengeId, $userId)
+            : $this->challengeService->decline($challengeId, $userId);
+
+        if (!$result['ok']) {
+            $this->sendError($conn, (string) $result['message']);
+            WebSocketLog::debug('LobbySocket', 'Challenge response rejected: ' . ($result['message'] ?? 'Unknown error'));
+            return;
+        }
+
+        if ($action === 'decline') {
+            $this->sendSystemChat($conn, "❌ You declined the challenge from {$escapedFromUsername}.");
+        }
+
+        $this->broadcast([
+            'type' => 'challenge_response',
+            'challenge_id' => $challengeId,
+            'action' => $action,
+            'from' => ['id' => $userId, 'username' => escape_html($username)],
+            'table_id' => $result['table_id'] ?? null,
+        ]);
+
+        $this->sendToUser($fromUserId, [
+            'type' => 'challenge_resolved',
+            'challenge_id' => $challengeId,
+            'action' => $action,
+        ]);
+        $this->sendToUser($toUserId, [
+            'type' => 'challenge_resolved',
+            'challenge_id' => $challengeId,
+            'action' => $action,
+        ]);
+
+        if ($action === 'accept') {
+            $tableId = isset($result['table_id']) ? (int) $result['table_id'] : null;
+            $gameId = isset($result['game_id']) ? (int) $result['game_id'] : null;
+
+            if ($tableId && $gameId) {
+                $escapedUsername = escape_html($username);
+                $gameStartMessage = [
+                    'type' => 'GAME_START',
+                    'table_id' => $tableId,
+                    'game_id' => $gameId,
+                    'message' => 'Challenge accepted! Starting game...',
+                ];
+
+                $this->sendToUser($fromUserId, $gameStartMessage);
+                $this->sendToUser($toUserId, $gameStartMessage);
+
+                $this->sendSystemChatToUser($fromUserId, "✅ {$escapedUsername} accepted your challenge! Starting game...");
+
+                $this->sendSystemChat($conn, "✅ You accepted the challenge from {$escapedFromUsername}! Starting game...");
+
+                WebSocketLog::debug('LobbySocket', "Challenge #{$challengeId} accepted; created table #{$tableId}, game #{$gameId} for users {$fromUserId} and {$toUserId}");
+                return;
+            }
+
+            WebSocketLog::error('LobbySocket', 'Challenge accepted but missing table_id or game_id. Result: ' . json_encode($result));
+            return;
+        }
+
+        if ($fromUserId !== $userId) {
+            $escapedUsername = escape_html($username);
+            $this->sendSystemChatToUser($fromUserId, "❌ {$escapedUsername} declined your challenge.");
+            WebSocketLog::debug('LobbySocket', "{$username} declined challenge from {$escapedFromUsername}");
+        }
+    }
+
+    /** @param array<string, mixed> $data */
+    private function handleChallengeCancel(ConnectionInterface $conn, array $data, int $userId, string $username): void
+    {
+        $challengeId = (int) ($data['challenge_id'] ?? 0);
+        if ($challengeId <= 0) {
+            $this->sendError($conn, 'invalid_challenge_id');
+            return;
+        }
+
+        $challenge = db_get_challenge_for_accept($this->pdo, $challengeId);
+        if (!$challenge) {
+            $this->sendError($conn, 'challenge_not_found');
+            return;
+        }
+
+        $fromUserId = (int) $challenge['from_user_id'];
+        $toUserId = (int) $challenge['to_user_id'];
+        $toUsername = db_get_username_by_id($this->pdo, $toUserId) ?? "User#$toUserId";
+        $escapedToUsername = escape_html($toUsername);
+
+        $result = $this->challengeService->cancel($challengeId, $userId);
+        if (!$result['ok']) {
+            $this->sendError($conn, (string) $result['message']);
+            return;
+        }
+
+        $this->sendSystemChat($conn, "❌ You canceled your challenge to {$escapedToUsername}.");
+
+        $this->sendSystemChatToUser($toUserId, "❌ {$username} canceled their challenge to you.");
+
+        $this->broadcast([
+            'type' => 'challenge_cancel',
+            'challenge_id' => $challengeId,
+            'from' => ['id' => $userId, 'username' => escape_html($username)],
+        ]);
+
+        $this->sendToUser($fromUserId, [
+            'type' => 'challenge_resolved',
+            'challenge_id' => $challengeId,
+            'action' => 'cancelled',
+        ]);
+        $this->sendToUser($toUserId, [
+            'type' => 'challenge_resolved',
+            'challenge_id' => $challengeId,
+            'action' => 'cancelled',
+        ]);
+
+        WebSocketLog::debug('LobbySocket', "{$username} canceled challenge to {$escapedToUsername}");
     }
 
     // -------------------------------------------------------------------------
@@ -698,15 +509,8 @@ class LobbySocket implements MessageComponentInterface
         $uid = (int)$info['user_id'];
         $uname = $info['username'];
 
-        // Check if user has other active connections BEFORE removing this one
-        // This prevents "left/joined" spam on page refresh
-        $hasOtherConnections = false;
-        foreach ($this->connInfo as $otherRid => $otherInfo) {
-            if ($otherInfo['user_id'] === $uid && $otherRid !== $rid) {
-                $hasOtherConnections = true;
-                break;
-            }
-        }
+        // Check if user has other active connections BEFORE removing this one.
+        $hasOtherConnections = $this->hasOtherActiveConnections($uid, $rid);
 
         // Now remove this connection
         $this->clients->detach($conn);
@@ -716,10 +520,7 @@ class LobbySocket implements MessageComponentInterface
             $this->subscriptionService->disconnect((string)$rid);
             
             // Check if this was an explicit logout - if so, don't track in recentDisconnects
-            $wasExplicitLogout = isset($this->explicitLogouts[$uid]);
-            if ($wasExplicitLogout) {
-                unset($this->explicitLogouts[$uid]);
-            }
+            $wasExplicitLogout = $this->consumeExplicitLogout($uid);
             
             // Only mark offline if this was their last connection
             if (!$hasOtherConnections) {
@@ -738,13 +539,13 @@ class LobbySocket implements MessageComponentInterface
                         'severity' => 'info',
                     ]);
                 } catch (\Throwable $e) {
-                    error_log('[LobbySocket] Audit logging failed: ' . $e->getMessage());
+                    WebSocketLog::warn('LobbySocket', 'Audit logging failed on disconnect: ' . $e->getMessage());
                 }
                 
                 // Track disconnect time if it was NOT an explicit logout (to detect quick reconnects)
                 if (!$wasExplicitLogout) {
                     $this->recentDisconnects[$uid] = [
-                        'time' => time(),
+                        'timestamp' => self::monotonicNow(),
                         'username' => $uname,
                     ];
                 }
@@ -753,10 +554,87 @@ class LobbySocket implements MessageComponentInterface
             }
 
         } catch (\Throwable $e) {
-            error_log("LobbySocket cleanup: " . $e->getMessage());
+            WebSocketLog::warn('LobbySocket', 'Cleanup failed: ' . $e->getMessage());
         }
 
-        echo "🔴 {$uname} disconnected\n";
+        WebSocketLog::debug('LobbySocket', "{$uname} disconnected");
+    }
+
+    private function hasOtherActiveConnections(int $userId, int $excludeRid): bool
+    {
+        foreach ($this->connInfo as $otherRid => $otherInfo) {
+            if ((int) $otherInfo['user_id'] === $userId && $otherRid !== $excludeRid) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function consumeQuickReconnect(int $userId): bool
+    {
+        $disconnectInfo = $this->recentDisconnects[$userId] ?? null;
+        if ($disconnectInfo === null) {
+            return false;
+        }
+
+        unset($this->recentDisconnects[$userId]);
+        return (self::monotonicNow() - (float) ($disconnectInfo['timestamp'] ?? 0.0)) < self::QUICK_RECONNECT_WINDOW_S;
+    }
+
+    private function consumeExplicitLogout(int $userId): bool
+    {
+        if (!isset($this->explicitLogouts[$userId])) {
+            return false;
+        }
+
+        unset($this->explicitLogouts[$userId]);
+        return true;
+    }
+
+    private function flushExpiredDisconnectAnnouncements(?int $skipUserId = null): void
+    {
+        $now = self::monotonicNow();
+
+        foreach ($this->recentDisconnects as $userId => $info) {
+            if ($skipUserId !== null && $userId === $skipUserId) {
+                continue;
+            }
+
+            if (($now - (float) ($info['timestamp'] ?? 0.0)) < self::QUICK_RECONNECT_WINDOW_S) {
+                continue;
+            }
+
+            $this->broadcastLobbyLeave($userId, (string) $info['username']);
+            unset($this->recentDisconnects[$userId]);
+        }
+    }
+
+    private function broadcastLobbyJoin(string $username, ConnectionInterface $except): void
+    {
+        $escapedUsername = escape_html($username);
+        $this->broadcastSystemChatExcept($except, "🟢 {$escapedUsername} joined the lobby.");
+    }
+
+    private function broadcastLobbyLeave(int $userId, string $username, ?ConnectionInterface $except = null): void
+    {
+        $escapedUsername = escape_html($username);
+        $chatMessage = $this->buildSystemChatPayload("🔴 {$escapedUsername} left the lobby.");
+
+        $presenceMessage = [
+            'type'  => 'presence',
+            'event' => 'leave',
+            'user'  => ['id' => $userId, 'username' => $escapedUsername],
+        ];
+
+        if ($except === null) {
+            $this->broadcast($chatMessage);
+            $this->broadcast($presenceMessage);
+            return;
+        }
+
+        $this->broadcastExcept($except, $chatMessage);
+        $this->broadcastExcept($except, $presenceMessage);
     }
 
     // -------------------------------------------------------------------------
@@ -764,21 +642,23 @@ class LobbySocket implements MessageComponentInterface
     // -------------------------------------------------------------------------
     public function onError(ConnectionInterface $conn, \Exception $e)
     {
-        error_log("LobbySocket error: " . $e->getMessage());
-        $conn->send(json_encode(['type' => 'error', 'error' => 'server_error']));
-        $conn->close();
+        WebSocketLog::error('LobbySocket', 'Transport error: ' . $e->getMessage());
+        $this->sendError($conn, 'server_error');
+        WebSocketJson::closeQuietly($conn);
     }
 
     /** Broadcast JSON to all connected lobby clients. */
     private function broadcast(array $data): void
     {
-        $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $json = $this->encodeJson($data, 'Broadcast encoding failed');
+        if ($json === null) {
+            return;
+        }
+
         foreach ($this->clients as $client) {
-            try {
-                $client->send($json);
-            } catch (\Throwable $e) {
-                error_log("Broadcast failed: " . $e->getMessage());
-            }
+            WebSocketJson::sendEncoded($client, $json, static function (\Throwable $e): void {
+                WebSocketLog::warn('LobbySocket', 'Broadcast failed: ' . $e->getMessage());
+            });
         }
     }
 
@@ -786,64 +666,112 @@ class LobbySocket implements MessageComponentInterface
      * Public method to broadcast presence updates from GameSocket.
      * Called when a user's presence status changes (e.g., goes in_game).
      */
-    public function broadcastPresenceUpdate(int $userId, string $username, string $status): void
+    public function broadcastPresenceUpdate(array $user): void
     {
         $this->broadcast([
             'type'  => 'presence',
             'event' => 'update',
-            'user'  => [
-                'id'       => $userId,
-                'username' => escape_html($username),
-                'status'   => $status
-            ]
+            'user'  => $user,
         ]);
     }
 
     /** Broadcast JSON to all connected lobby clients except the excluded connection. */
     private function broadcastExcept(ConnectionInterface $except, array $data): void
     {
-        $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $json = $this->encodeJson($data, 'Broadcast encoding failed');
+        if ($json === null) {
+            return;
+        }
+
         foreach ($this->clients as $client) {
             if ($client === $except) continue;
-            try {
-                $client->send($json);
-            } catch (\Throwable $e) {
-                error_log("Broadcast failed: " . $e->getMessage());
-            }
+            WebSocketJson::sendEncoded($client, $json, static function (\Throwable $e): void {
+                WebSocketLog::warn('LobbySocket', 'Broadcast failed: ' . $e->getMessage());
+            });
         }
+    }
+
+    private function sendSystemChat(ConnectionInterface $conn, string $message): void
+    {
+        $this->sendJson($conn, $this->buildSystemChatPayload($message));
+    }
+
+    private function sendSystemChatToUser(int $userId, string $message): void
+    {
+        $this->sendToUser($userId, $this->buildSystemChatPayload($message));
+    }
+
+    private function broadcastSystemChatExcept(ConnectionInterface $except, string $message): void
+    {
+        $this->broadcastExcept($except, $this->buildSystemChatPayload($message));
+    }
+
+    /** @return array<string, mixed> */
+    private function buildSystemChatPayload(string $message): array
+    {
+        return [
+            'type' => 'chat',
+            'system' => true,
+            'msg' => $message,
+            'time' => date('H:i'),
+            'created_at' => date('Y-m-d H:i:s'),
+        ];
     }
 
     /** Send JSON to a single user by user_id. */
     private function sendToUser(int $userId, array $data): void
     {
-        $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $json = $this->encodeJson($data, 'Send-to-user encoding failed');
+        if ($json === null) {
+            return;
+        }
+
         foreach ($this->clients as $client) {
             $rid = (int)$client->resourceId;
             if (isset($this->connInfo[$rid]) && $this->connInfo[$rid]['user_id'] === $userId) {
-                try {
-                    $client->send($json);
-                } catch (\Throwable $e) {
-                    error_log("Send to user failed: " . $e->getMessage());
-                }
+                WebSocketJson::sendEncoded($client, $json, static function (\Throwable $e): void {
+                    WebSocketLog::warn('LobbySocket', 'Send to user failed: ' . $e->getMessage());
+                });
             }
+        }
+    }
+
+    /** @param array<string, mixed> $data */
+    private function sendJson(ConnectionInterface $conn, array $data): bool
+    {
+        return WebSocketJson::send($conn, $data);
+    }
+
+    /** @param array<string, mixed> $extra */
+    private function sendError(ConnectionInterface $conn, string $error, array $extra = []): bool
+    {
+        return $this->sendJson($conn, ['type' => 'error', 'error' => $error] + $extra);
+    }
+
+    /** @param array<string, mixed> $data */
+    private function encodeJson(array $data, string $failureContext): ?string
+    {
+        try {
+            return WebSocketJson::encode($data);
+        } catch (\Throwable $e) {
+            WebSocketLog::error('LobbySocket', $failureContext . ': ' . $e->getMessage());
+            return null;
         }
     }
 
     /** Simple token bucket rate limiter per connection. */
     private function rateAllow(int $rid): bool
     {
-        if (!isset($this->connInfo[$rid]['rate'])) {
-            $this->connInfo[$rid]['rate'] = ['ts' => time(), 'tokens' => self::RATE_TOKENS];
-            return true;
+        if (!isset($this->connInfo[$rid])) {
+            return false;
         }
 
-        $now     = microtime(true);
-        $state   = &$this->connInfo[$rid]['rate'];
-        $elapsed = max(0.0, $now - $state['ts']);
-        $state['ts'] = $now;
-        $state['tokens'] = min(self::RATE_TOKENS, $state['tokens'] + $elapsed * self::RATE_REFILL_PER_S);
-        if ($state['tokens'] < 1.0) return false;
-        $state['tokens'] -= 1.0;
-        return true;
+        $state = &$this->connInfo[$rid]['rate'];
+        return TokenBucketRateLimiter::allow($state, self::RATE_TOKENS, self::RATE_REFILL_PER_S);
+    }
+
+    private static function monotonicNow(): float
+    {
+        return hrtime(true) / 1_000_000_000;
     }
 }

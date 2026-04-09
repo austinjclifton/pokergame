@@ -68,6 +68,7 @@ final class LobbyServiceTest extends TestCase
         
         // Clear presence records for test isolation
         $this->pdo->exec("DELETE FROM user_lobby_presence");
+        $this->pdo->exec("DELETE FROM chat_messages");
         
         // Clear $_COOKIE and $_SERVER for isolated tests
         $_COOKIE = [];

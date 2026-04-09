@@ -50,7 +50,7 @@ final class GameState
     /**
      * Initialize seated players
      *
-     * @param array<int, array{seat:int, stack:int}> $players
+     * @param array<int, array{seat:int, stack:int, user_id?:int}> $players
      */
     public function initializePlayers(array $players): void
     {
@@ -59,7 +59,12 @@ final class GameState
         foreach ($players as $p) {
             $seat  = (int)$p['seat'];
             $stack = (int)$p['stack'];
-            $this->players[$seat] = new PlayerState($seat, $stack);
+            $player = new PlayerState($seat, $stack);
+            if (isset($p['user_id'])) {
+                $player->user_id = (int)$p['user_id'];
+            }
+
+            $this->players[$seat] = $player;
         }
     }
 
@@ -79,6 +84,8 @@ final class GameState
                 'allIn'           => $p->allIn,
                 'actedThisStreet' => $p->actedThisStreet,
                 'totalInvested'   => $p->totalInvested,
+                'contribution'    => $p->contribution,
+                'user_id'         => $p->user_id,
                 'cards'           => $p->cards,
                 'handRank'        => $p->handRank,
                 'handDescription' => $p->handDescription,
@@ -93,11 +100,121 @@ final class GameState
             'dealerSeat'     => $this->dealerSeat,
             'smallBlindSeat' => $this->smallBlindSeat,
             'bigBlindSeat'   => $this->bigBlindSeat,
+            'smallBlindAmount' => $this->smallBlindAmount,
+            'bigBlindAmount' => $this->bigBlindAmount,
             'actionSeat'     => $this->actionSeat,
+            'lastRaiseSeat'  => $this->lastRaiseSeat,
+            'lastRaiseAmount' => $this->lastRaiseAmount,
             'players'        => $playersArr,
             'lastHandResult' => $this->lastHandResult,
             'handIndex'      => $this->handIndex,
+            'handStartingStacks' => $this->handStartingStacks,
+            'deckSeed'       => $this->deckSeed,
+            'dealer'         => $this->dealer?->exportState(),
         ];
+    }
+
+    /**
+     * Restore state from a persisted snapshot.
+     *
+     * @param array<string, mixed> $state
+     */
+    public function restoreFromArray(array $state): void
+    {
+        $this->players = [];
+        if (isset($state['players']) && is_array($state['players'])) {
+            foreach ($state['players'] as $seat => $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+
+                $seatNo = (int)($row['seat'] ?? $seat);
+                $player = new PlayerState($seatNo, (int)($row['stack'] ?? 0));
+                $player->bet = (int)($row['bet'] ?? 0);
+                $player->folded = (bool)($row['folded'] ?? false);
+                $player->allIn = (bool)($row['allIn'] ?? false);
+                $player->actedThisStreet = (bool)($row['actedThisStreet'] ?? false);
+
+                $cards = $row['cards'] ?? [];
+                $player->cards = is_array($cards)
+                    ? array_values(array_map(static fn($card): string => (string) $card, $cards))
+                    : [];
+
+                $player->handRank = array_key_exists('handRank', $row) && $row['handRank'] !== null
+                    ? (int)$row['handRank']
+                    : null;
+                $player->handDescription = array_key_exists('handDescription', $row) && $row['handDescription'] !== null
+                    ? (string)$row['handDescription']
+                    : null;
+                $player->totalInvested = (int)($row['totalInvested'] ?? 0);
+                $player->contribution = (int)($row['contribution'] ?? $player->totalInvested);
+                $player->user_id = (int)($row['user_id'] ?? 0);
+
+                $this->players[$seatNo] = $player;
+            }
+
+            ksort($this->players);
+        }
+
+        $board = $state['board'] ?? [];
+        $this->board = is_array($board)
+            ? array_values(array_map(static fn($card): string => (string) $card, $board))
+            : [];
+        $this->phase = Phase::from((string)($state['phase'] ?? Phase::PREFLOP->value));
+        $this->pot = (int)($state['pot'] ?? 0);
+        $this->currentBet = (int)($state['currentBet'] ?? 0);
+        $this->dealerSeat = (int)($state['dealerSeat'] ?? 0);
+        $this->smallBlindSeat = (int)($state['smallBlindSeat'] ?? 0);
+        $this->bigBlindSeat = (int)($state['bigBlindSeat'] ?? 0);
+        $this->smallBlindAmount = (int)($state['smallBlindAmount'] ?? $this->smallBlindAmount);
+        $this->bigBlindAmount = (int)($state['bigBlindAmount'] ?? $this->bigBlindAmount);
+        $this->actionSeat = (int)($state['actionSeat'] ?? 0);
+        $this->lastRaiseSeat = (int)($state['lastRaiseSeat'] ?? -1);
+        $this->lastRaiseAmount = (int)($state['lastRaiseAmount'] ?? 0);
+        $this->handIndex = (int)($state['handIndex'] ?? 0);
+        $this->handStartingStacks = isset($state['handStartingStacks']) && is_array($state['handStartingStacks'])
+            ? $state['handStartingStacks']
+            : [];
+        $this->lastHandResult = isset($state['lastHandResult']) && is_array($state['lastHandResult'])
+            ? $state['lastHandResult']
+            : null;
+        $this->deckSeed = array_key_exists('deckSeed', $state) && $state['deckSeed'] !== null
+            ? (int)$state['deckSeed']
+            : null;
+        $this->dealer = $this->restoreDealerFromArray($state);
+    }
+
+    /**
+     * @param array<string, mixed> $state
+     */
+    private function restoreDealerFromArray(array $state): ?DealerService
+    {
+        $dealerState = $state['dealer'] ?? null;
+        if (is_array($dealerState)) {
+            $dealer = new DealerService();
+            $dealer->restoreState($dealerState);
+            return $dealer;
+        }
+
+        if ($this->deckSeed === null) {
+            return null;
+        }
+
+        $dealer = new DealerService($this->deckSeed);
+        $dealer->shuffleDeck();
+        $dealer->skipCards($this->countDealtCards());
+        return $dealer;
+    }
+
+    private function countDealtCards(): int
+    {
+        $count = count($this->board);
+
+        foreach ($this->players as $player) {
+            $count += count($player->cards);
+        }
+
+        return $count;
     }
 
     /**
