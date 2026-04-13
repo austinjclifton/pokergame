@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/GameState.php';
 require_once __DIR__ . '/engine/BettingEngine.php';
+require_once __DIR__ . '/engine/TurnOrder.php';
 require_once __DIR__ . '/rules/GameTypes.php';
 
 final class ActionProcessor
@@ -77,12 +78,6 @@ final class ActionProcessor
         // ================================
         // EXECUTE ACTION (stack/bet mutations)
         // ================================
-        $oldPot = $state->pot;
-        $oldContrib = $player->contribution;
-
-        // ========================================================
-        // NEW: pass allPlayers to allow effective-stack enforcement
-        // ========================================================
         $result = BettingEngine::executeAction(
             $player,
             $action,
@@ -137,7 +132,7 @@ final class ActionProcessor
                 return [
                     'ok'        => true,
                     'handEnded' => true,
-                    'winner'    => null, // Winner determined in HandEnder
+                    'winner'    => null,
                 ];
             }
         }
@@ -145,45 +140,12 @@ final class ActionProcessor
         // ================================
         // ROTATE ACTION SEAT
         // ================================
-        $state->actionSeat = self::nextActive($state, $seat);
+        $state->actionSeat = TurnOrder::nextActiveSeat($state->players, $seat);
 
         return [
             'ok'        => true,
             'handEnded' => false,
             'winner'    => null,
         ];
-    }
-
-    /**
-     * ========================================================
-     * FIND NEXT ACTION SEAT
-     * ========================================================
-     * Finds next seat that is:
-     *    • not folded
-     *    • not all-in
-     * ========================================================
-     */
-    private static function nextActive(GameState $state, int $start): int
-    {
-        $seats = array_keys($state->players);
-        sort($seats);
-
-        $startIndex = array_search($start, $seats, true);
-        if ($startIndex === false) {
-            return -1;
-        }
-
-        $n = count($seats);
-
-        for ($i = 1; $i <= $n; $i++) {
-            $s = $seats[($startIndex + $i) % $n];
-            $p = $state->players[$s];
-
-            if (!$p->folded && !$p->allIn) {
-                return $s;
-            }
-        }
-
-        return -1;
     }
 }

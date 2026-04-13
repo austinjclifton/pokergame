@@ -68,7 +68,6 @@ function lobby_record_message(PDO $pdo, int $userId, string $text): array {
 
     // Insert message into chat_messages
     $msgId = db_insert_chat_message($pdo, 'lobby', 0, $userId, $text, null, $username);
-    $rows = db_get_recent_chat_messages($pdo, 'lobby', 0, 1);
 
-    return $rows[0] ?? [];
+    return db_get_chat_message_by_id($pdo, $msgId) ?? [];
 }

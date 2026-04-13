@@ -7,6 +7,7 @@ use Psr\Http\Message\RequestInterface;
 
 require_once __DIR__ . '/../app/db/nonces.php';
 require_once __DIR__ . '/../app/db/sessions.php';
+require_once __DIR__ . '/../app/services/NonceService.php';
 require_once __DIR__ . '/../lib/WebSocketLog.php';
 require_once __DIR__ . '/../lib/WebSocketJson.php';
 
@@ -56,7 +57,7 @@ final class AuthenticatedServer implements MessageComponentInterface {
         if ($token === '') return null;
 
         try {
-            $result = db_consume_ws_nonce($this->pdo, $token);
+            $result = nonce_consume_ws_token($this->pdo, $token);
             if (!$result) return null;
 
             return [

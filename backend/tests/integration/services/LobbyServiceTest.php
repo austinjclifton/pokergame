@@ -359,18 +359,26 @@ final class LobbyServiceTest extends TestCase
         }
     }
 
-    public function testRecordMessageReturnsMostRecentMessage(): void
+    public function testRecordMessageReturnsInsertedRowById(): void
     {
         $userId = $this->createTestUser('testuser');
         $username = $this->getUsernameFromDb($userId);
         
         // Insert first message
-        \db_insert_chat_message($this->pdo, 'lobby', 0, $userId, 'First message', null, $username);
+        $firstId = \db_insert_chat_message($this->pdo, 'lobby', 0, $userId, 'First message', null, $username);
         
         // Record second message
         $result = lobby_record_message($this->pdo, $userId, 'Second message');
         
+        $this->assertArrayHasKey('id', $result);
         $this->assertEquals('Second message', $result['body']);
+        $this->assertGreaterThan($firstId, (int)$result['id']);
+        $this->assertSame(strtolower($username), $result['sender_username']);
+        $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', (string)$result['created_at']);
+
+        $stored = \db_get_chat_message_by_id($this->pdo, (int)$result['id']);
+        $this->assertIsArray($stored);
+        $this->assertSame('Second message', $stored['body'] ?? null);
     }
 
     public function testRecordMessageHandlesNonExistentUser(): void

@@ -1,22 +1,10 @@
 <?php
 // backend/app/services/game/rules/GameTypes.php
 // -----------------------------------------------------------------------------
-// Shared types, enums, and exceptions for the poker game engine.
+// Shared enums for the poker game engine.
 // -----------------------------------------------------------------------------
 
 declare(strict_types=1);
-
-/**
- * Exception thrown when game version mismatch is detected
- */
-final class GameVersionMismatchException extends \Exception
-{
-    public function __construct(int $expectedVersion, int $actualVersion, string $message = '')
-    {
-        $msg = $message ?: "Game version mismatch: expected {$expectedVersion}, got {$actualVersion}";
-        parent::__construct($msg);
-    }
-}
 
 /**
  * Enum for game phases (streets) in Texas Hold'em

@@ -218,34 +218,31 @@ final class GameState
     }
 
     /**
-     * Reset only per-STREET data (NOT chips).
+     * Reset per-street betting state without touching the pot or hand totals.
      *
      * This must NOT touch:
      * - contribution
      * - totalInvested
      * - stack
      */
-    public function resetPot(): void
+    public function resetBettingRound(): void
     {
-        // Reset pot and betting state for a *new street*, not a new hand
         $this->currentBet      = 0;
         $this->lastRaiseSeat   = -1;
         $this->lastRaiseAmount = 0;
 
-        foreach ($this->players as $p) {
-            // per-street bet
-            $p->bet = 0;
-
-            // allow them to act on next street unless folded/all-in
-            if (!$p->folded && !$p->allIn) {
-                $p->actedThisStreet = false;
+        foreach ($this->players as $player) {
+            if ($player->folded || $player->allIn) {
+                $player->bet = 0;
+                continue;
             }
+
+            $player->resetForNewStreet();
         }
 
-        // DO NOT:
-        // - zero contribution
-        // - zero totalInvested
-        // - zero pot
-        // These are needed for showdown settlement.
+        // DO NOT zero:
+        // - contribution
+        // - totalInvested
+        // - pot
     }
 }

@@ -38,28 +38,22 @@ function auth_login_user(PDO $pdo, string $username, string $password): array {
     $ua = $_SERVER['HTTP_USER_AGENT'] ?? 'unknown';
     $sessionId = createSession($pdo, (int)$user['id'], $ip, $ua);
 
-    // Audit log: successful login
-    try {
-        log_audit_event($pdo, [
-            'user_id' => (int)$user['id'],
-            'session_id' => $sessionId,
-            'ip_address' => $ip,
-            'user_agent' => $ua,
-            'action' => 'user.login',
-            'entity_type' => 'user',
-            'entity_id' => (int)$user['id'],
-            'details' => [
-                'username' => $user['username'],
-                'password_rehashed' => password_needs_rehash($user['password_hash'], PASSWORD_DEFAULT),
-            ],
-            'channel' => 'api',
-            'status' => 'success',
-            'severity' => 'info',
-        ]);
-    } catch (Throwable $e) {
-        // Don't fail login if audit logging fails
-        error_log('[AuthService] Audit logging failed: ' . $e->getMessage());
-    }
+    AuditService::safeLog($pdo, [
+        'user_id' => (int)$user['id'],
+        'session_id' => $sessionId,
+        'ip_address' => $ip,
+        'user_agent' => $ua,
+        'action' => 'user.login',
+        'entity_type' => 'user',
+        'entity_id' => (int)$user['id'],
+        'details' => [
+            'username' => $user['username'],
+            'password_rehashed' => password_needs_rehash($user['password_hash'], PASSWORD_DEFAULT),
+        ],
+        'channel' => 'api',
+        'status' => 'success',
+        'severity' => 'info',
+    ], 'AuthService');
 
     // Don't mark as online here - presence is handled when WebSocket connects
     // This ensures join messages are sent correctly when they actually connect to the lobby
@@ -98,23 +92,18 @@ function auth_logout_user(PDO $pdo): bool {
 
         // Audit log: successful logout
         if ($session && !empty($session['user_id'])) {
-            try {
-                log_audit_event($pdo, [
-                    'user_id' => (int)$session['user_id'],
-                    'session_id' => $sid,
-                    'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
-                    'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
-                    'action' => 'user.logout',
-                    'entity_type' => 'user',
-                    'entity_id' => (int)$session['user_id'],
-                    'channel' => 'api',
-                    'status' => 'success',
-                    'severity' => 'info',
-                ]);
-            } catch (Throwable $e) {
-                // Don't fail logout if audit logging fails
-                error_log('[AuthService] Audit logging failed: ' . $e->getMessage());
-            }
+            AuditService::safeLog($pdo, [
+                'user_id' => (int)$session['user_id'],
+                'session_id' => $sid,
+                'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
+                'action' => 'user.logout',
+                'entity_type' => 'user',
+                'entity_id' => (int)$session['user_id'],
+                'channel' => 'api',
+                'status' => 'success',
+                'severity' => 'info',
+            ], 'AuthService');
         }
 
         // Optionally confirm removal
@@ -192,28 +181,22 @@ function auth_register_user(PDO $pdo, string $username, string $email, string $p
     $ua = $_SERVER['HTTP_USER_AGENT'] ?? 'unknown';
     $sessionId = createSession($pdo, $userId, $ip, $ua);
 
-    // Audit log: user registration
-    try {
-        log_audit_event($pdo, [
-            'user_id' => $userId,
-            'session_id' => $sessionId,
-            'ip_address' => $ip,
-            'user_agent' => $ua,
-            'action' => 'user.register',
-            'entity_type' => 'user',
-            'entity_id' => $userId,
-            'details' => [
-                'username' => $canonicalUsername,
-                'email' => $canonicalEmail, // Consider redacting domain for privacy
-            ],
-            'channel' => 'api',
-            'status' => 'success',
-            'severity' => 'info',
-        ]);
-    } catch (Throwable $e) {
-        // Don't fail registration if audit logging fails
-        error_log('[AuthService] Audit logging failed: ' . $e->getMessage());
-    }
+    AuditService::safeLog($pdo, [
+        'user_id' => $userId,
+        'session_id' => $sessionId,
+        'ip_address' => $ip,
+        'user_agent' => $ua,
+        'action' => 'user.register',
+        'entity_type' => 'user',
+        'entity_id' => $userId,
+        'details' => [
+            'username' => $canonicalUsername,
+            'email' => $canonicalEmail, // Consider redacting domain for privacy
+        ],
+        'channel' => 'api',
+        'status' => 'success',
+        'severity' => 'info',
+    ], 'AuthService');
 
     // Mark as online (presence system) - use canonical username
     $presence = new PresenceService($pdo);
@@ -250,22 +233,4 @@ function auth_require_session(PDO $pdo): array {
         'email'      => $session['email'],
         'session_id' => (int)$session['session_id'],
     ];
-}
-
-function auth_verify_ws_token(PDO $pdo, string $token): ?array {
-    try {
-        $row = db_consume_ws_nonce($pdo, $token);
-        if (!$row) {
-            return null;
-        }
-
-        return [
-            'user_id'    => (int)$row['user_id'],
-            'session_id' => (int)$row['session_id'],
-            'username'   => (string)$row['username'],
-        ];
-    } catch (Throwable $e) {
-        error_log('auth_verify_ws_token failed: ' . $e->getMessage());
-        return null;
-    }
 }

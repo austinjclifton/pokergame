@@ -434,10 +434,7 @@ final class GameSocket implements MessageComponentInterface
             
             // If the entire MATCH is over (one player busted), end the match now
             if ($matchEnded) {
-                // Validate winner/loser data before proceeding
-                if (!$winner || !$loser) {
-                    WebSocketLog::error('GameSocket', "Match end detected with missing winner/loser for table #{$tableId}");
-                    $this->sendError($from, 'server_error', 'Match end data invalid');
+                if (!$this->hasValidMatchEndPlayers($winner, $loser, $tableId, 'Match end detected', $from)) {
                     return;
                 }
                 
@@ -450,7 +447,7 @@ final class GameSocket implements MessageComponentInterface
                     $this->persistenceService->saveSnapshot($gameId, $stateAfter, $newVersion);
                 }
 
-                $stateSnapshot = isset($result['state']) ? $result['state'] : $gameService->getSnapshot();
+                $stateSnapshot = $this->resolveResultStateSnapshot($result, $gameService);
                 $this->finalizeMatchEnd(
                     $tableId,
                     $gameId,
@@ -459,28 +456,17 @@ final class GameSocket implements MessageComponentInterface
                     $reason,
                     $stateSnapshot,
                     function () use ($tableId): void {
-                        try {
-                            if (isset($this->userConnections[$tableId])) {
-                                foreach ($this->userConnections[$tableId] as $uid => $conns) {
-                                    $username = null;
-                                    if (!empty($conns)) {
-                                        $rid = $conns[0]->resourceId;
-                                        $username = $this->connInfo[$rid]['username'] ?? null;
-                                    }
-
-                                    if (!is_string($username) || $username === '') {
-                                        $username = "User#{$uid}";
-                                    }
-
-                                    $presenceUser = $this->presenceService->syncOnlinePresence($uid, $username);
-                                    $this->broadcastLobbyPresenceUpdate($presenceUser);
-
-                                    WebSocketLog::debug('GameSocket', "Updated presence to online after match end for user {$uid}");
-                                }
-                            }
-                        } catch (\Throwable $e) {
-                            WebSocketLog::warn('GameSocket', 'Failed to update presence after match end: ' . $e->getMessage());
+                        $presenceUsers = [];
+                        foreach ($this->userConnections[$tableId] ?? [] as $uid => $conns) {
+                            $presenceUsers[] = [
+                                'user_id'  => (int)$uid,
+                                'username' => !empty($conns)
+                                    ? ($this->connInfo[$conns[0]->resourceId]['username'] ?? null)
+                                    : null,
+                            ];
                         }
+
+                        $this->syncMatchEndPresence($presenceUsers, 'match end');
                     },
                     true,
                 );
@@ -559,15 +545,12 @@ final class GameSocket implements MessageComponentInterface
                 $loser  = $result['loser']  ?? null;
                 $reason = $result['reason'] ?? null;
                 
-                // Validate winner/loser data before proceeding
-                if (!$winner || !$loser) {
-                    WebSocketLog::error('GameSocket', "Next-hand match end missing winner/loser for table #{$tableId}");
-                    $this->sendError($from, 'server_error', 'Match end data invalid');
+                if (!$this->hasValidMatchEndPlayers($winner, $loser, $tableId, 'Next-hand match end', $from)) {
                     return;
                 }
                 
                 $gameId = $gameService->getGameId();
-                $stateSnapshot = isset($result['state']) ? $result['state'] : $gameService->getSnapshot();
+                $stateSnapshot = $this->resolveResultStateSnapshot($result, $gameService);
                 $this->finalizeMatchEnd(
                     $tableId,
                     $gameId,
@@ -576,24 +559,7 @@ final class GameSocket implements MessageComponentInterface
                     $reason,
                     $stateSnapshot,
                     function () use ($winner, $loser): void {
-                        $unameWinner = $winner['username'] ?? ("User#" . $winner['user_id']);
-                        $unameLoser  = $loser['username']  ?? ("User#" . $loser['user_id']);
-
-                        try {
-                            $winnerPresence = $this->presenceService->syncOnlinePresence(
-                                (int)$winner['user_id'],
-                                $unameWinner
-                            );
-                            $loserPresence = $this->presenceService->syncOnlinePresence(
-                                (int)$loser['user_id'],
-                                $unameLoser
-                            );
-                            $this->broadcastLobbyPresenceUpdate($winnerPresence);
-                            $this->broadcastLobbyPresenceUpdate($loserPresence);
-
-                        } catch (\Throwable $e) {
-                            WebSocketLog::warn('GameSocket', 'Failed to update presence after next-hand match end: ' . $e->getMessage());
-                        }
+                        $this->syncMatchEndPresence([$winner, $loser], 'next-hand match end');
                     },
                 );
     
@@ -657,24 +623,49 @@ final class GameSocket implements MessageComponentInterface
         }
 
         $msgId = db_insert_chat_message($this->pdo, 'game', $gameId, $userId, $text, null, $username);
-
-        // Retrieve canonical timestamp from DB to prevent clock skew in UI
-        $stmt = $this->pdo->prepare("SELECT created_at FROM chat_messages WHERE id = :id LIMIT 1");
-        $stmt->execute(['id' => $msgId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $createdAt = $row ? $row['created_at'] : date('Y-m-d H:i:s');
-        $timeStr   = date('H:i', strtotime($createdAt));
+        $message = db_get_chat_message_by_id($this->pdo, $msgId) ?? [
+            'sender_username' => $username,
+            'body' => $text,
+            'created_at' => date('Y-m-d H:i:s'),
+        ];
 
         $this->broadcast($tableId, [
-            'type'       => 'CHAT',
-            'from'       => escape_html($username),
-            'msg'        => escape_html($text),
-            'time'       => $timeStr,
-            'created_at' => $createdAt,
+            'type' => 'CHAT',
+            ...$this->buildChatMessagePayload($message),
         ]);
 
         // Non-looped test instances still rely on a synchronous fallback sweep.
         $this->flushPendingDisconnectsFallback();
+    }
+
+
+    private function hasValidMatchEndPlayers(
+        mixed $winner,
+        mixed $loser,
+        int $tableId,
+        string $context,
+        ?ConnectionInterface $conn = null,
+    ): bool {
+        if (is_array($winner) && is_array($loser)) {
+            return true;
+        }
+
+        WebSocketLog::error('GameSocket', "{$context} missing winner/loser for table #{$tableId}");
+
+        if ($conn !== null) {
+            $this->sendError($conn, 'server_error', 'Match end data invalid');
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     * @return array<string, mixed>
+     */
+    private function resolveResultStateSnapshot(array $result, object $service)
+    {
+        return isset($result['state']) ? $result['state'] : $service->getSnapshot();
     }
 
     // -------------------------------------------------------------------------
@@ -1089,6 +1080,33 @@ final class GameSocket implements MessageComponentInterface
         $this->lobbySocket->broadcastPresenceUpdate($presenceUser);
     }
 
+    /**
+     * @param list<array{user_id:mixed, username?:mixed}> $users
+     */
+    private function syncMatchEndPresence(array $users, string $context): void
+    {
+        try {
+            foreach ($users as $user) {
+                $uid = (int) ($user['user_id'] ?? 0);
+                if ($uid <= 0) {
+                    continue;
+                }
+
+                $username = $user['username'] ?? null;
+                if (!is_string($username) || $username === '') {
+                    $username = "User#{$uid}";
+                }
+
+                $presenceUser = $this->presenceService->syncOnlinePresence($uid, $username);
+                $this->broadcastLobbyPresenceUpdate($presenceUser);
+
+                WebSocketLog::debug('GameSocket', "Updated presence to online after {$context} for user {$uid}");
+            }
+        } catch (\Throwable $e) {
+            WebSocketLog::warn('GameSocket', "Failed to update presence after {$context}: " . $e->getMessage());
+        }
+    }
+
     private function sendChatHistory(ConnectionInterface $conn, int $gameId): void
     {
         if ($gameId <= 0) {
@@ -1097,20 +1115,25 @@ final class GameSocket implements MessageComponentInterface
         }
 
         $recent = db_get_recent_chat_messages($this->pdo, 'game', $gameId, self::CHAT_HISTORY_SIZE);
-        $messages = array_map(static function ($m) {
-            $timeStr = date('H:i', strtotime($m['created_at']));
-            return [
-                'from'       => escape_html($m['sender_username']),
-                'msg'        => escape_html($m['body']),
-                'time'       => $timeStr,
-                'created_at' => $m['created_at'],
-            ];
-        }, $recent);
+        $messages = array_map(fn(array $message): array => $this->buildChatMessagePayload($message), $recent);
 
         $this->sendJson($conn, [
             'type'     => 'CHAT_HISTORY',
             'messages' => $messages,
         ]);
+    }
+
+    /** @param array<string, mixed> $message */
+    private function buildChatMessagePayload(array $message): array
+    {
+        $createdAt = (string) ($message['created_at'] ?? date('Y-m-d H:i:s'));
+
+        return [
+            'from' => escape_html((string) ($message['sender_username'] ?? 'Unknown')),
+            'msg' => escape_html((string) ($message['body'] ?? '')),
+            'time' => date('H:i', strtotime($createdAt)),
+            'created_at' => $createdAt,
+        ];
     }
 
     private function getGameVersion(int $gameId): int
@@ -1431,15 +1454,13 @@ final class GameSocket implements MessageComponentInterface
             $loser  = $result['loser']  ?? null;
             $reason = $result['reason'] ?? null;
             
-            // Validate winner/loser data before proceeding
-            if (!$winner || !$loser) {
-                WebSocketLog::error('GameSocket', "Bootstrapping match end missing winner/loser for table #{$tableId}");
+            if (!$this->hasValidMatchEndPlayers($winner, $loser, $tableId, 'Bootstrapping match end')) {
                 // Don't broadcast invalid data, but mark as bootstrapped to prevent retry
                 $this->tableBootstrapped[$tableId] = true;
                 return;
             }
 
-            $stateSnapshot = isset($result['state']) ? $result['state'] : $svc->getSnapshot();
+            $stateSnapshot = $this->resolveResultStateSnapshot($result, $svc);
             $this->finalizeMatchEnd(
                 $tableId,
                 $gameId,

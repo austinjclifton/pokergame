@@ -454,6 +454,54 @@ final class GameSocketTest extends TestCase
         $this->assertTrue($pongFound, 'Should receive pong for ping');
     }
 
+    public function testChatBroadcastUsesStoredCanonicalMessageRow(): void
+    {
+        $chatUserId = $this->createTestUser('PlayerOne');
+        $viewerUserId = $this->createTestUser('ViewerTwo');
+
+        $tableId = (int) db_create_table($this->pdo, 'Chat Canonical Table', 2, 10, 20, 0);
+        db_seat_player($this->pdo, $tableId, 1, $chatUserId);
+        db_seat_player($this->pdo, $tableId, 2, $viewerUserId);
+        $gameId = (int) db_create_game($this->pdo, $tableId, 1, 1, 2, 24680);
+
+        $gameSocket = new GameSocket($this->pdo);
+        $speaker = $this->createConnection(201, $chatUserId, $tableId);
+        $viewer = $this->createConnection(202, $viewerUserId, $tableId);
+
+        $gameSocket->onOpen($speaker);
+        $gameSocket->onAuthenticated($speaker);
+        $gameSocket->onOpen($viewer);
+        $gameSocket->onAuthenticated($viewer);
+
+        $speaker->sentMessages = [];
+        $viewer->sentMessages = [];
+
+        $gameSocket->onMessage($speaker, json_encode([
+            'type' => 'chat',
+            'msg' => 'Hello <b>table</b>',
+        ]));
+
+        $chatBroadcast = null;
+        foreach ($viewer->sentMessages as $message) {
+            $decoded = json_decode($message, true);
+            if (($decoded['type'] ?? null) === 'CHAT') {
+                $chatBroadcast = $decoded;
+                break;
+            }
+        }
+
+        $this->assertNotNull($chatBroadcast, 'Expected a live chat broadcast');
+
+        $storedMessages = db_get_recent_chat_messages($this->pdo, 'game', $gameId, 1);
+        $this->assertCount(1, $storedMessages);
+        $stored = $storedMessages[0];
+
+        $this->assertSame('playerone', $stored['sender_username']);
+        $this->assertSame(escape_html((string) $stored['sender_username']), $chatBroadcast['from'] ?? null);
+        $this->assertSame(escape_html((string) $stored['body']), $chatBroadcast['msg'] ?? null);
+        $this->assertSame($stored['created_at'], $chatBroadcast['created_at'] ?? null);
+    }
+
     public function testConnectionWithoutActiveGameRejected(): void
     {
         $tableId = (int) db_create_table($this->pdo, 'No Active Game Table', 2, 10, 20, 0);
@@ -503,6 +551,102 @@ final class GameSocketTest extends TestCase
         $this->assertSame('in_game', $presenceUpdate['user']['status'] ?? null);
         $this->assertSame($this->tableId, $presenceUpdate['user']['active_table_id'] ?? null);
         $this->assertSame('player1', $presenceUpdate['user']['username'] ?? null);
+    }
+
+    public function testNextHandMatchEndRestoresLobbyPresenceToOnline(): void
+    {
+        $lobbySocket = new LobbySocket($this->pdo);
+        $watcher = $this->createLobbyConnection(60, $this->userId1);
+        $lobbySocket->onOpen($watcher);
+
+        $gameSocket = new GameSocket($this->pdo, $lobbySocket);
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
+        $gameSocket->onOpen($conn1);
+        $gameSocket->onAuthenticated($conn1);
+        $gameSocket->onOpen($conn2);
+        $gameSocket->onAuthenticated($conn2);
+
+        $watcher->sentMessages = [];
+
+        $matchEndService = new class($this->gameId, $this->userId1, $this->userId2) {
+            public function __construct(
+                private int $gameId,
+                private int $winnerUserId,
+                private int $loserUserId,
+            ) {
+            }
+
+            public function startHand(): array
+            {
+                return [
+                    'matchEnded' => true,
+                    'winner' => [
+                        'user_id' => $this->winnerUserId,
+                        'username' => 'player1',
+                    ],
+                    'loser' => [
+                        'user_id' => $this->loserUserId,
+                        'username' => 'player2',
+                    ],
+                    'reason' => 'bustout',
+                    'state' => [
+                        'board' => [],
+                        'players' => [
+                            1 => [
+                                'user_id' => $this->winnerUserId,
+                                'cards' => [],
+                                'folded' => false,
+                                'stack' => 2000,
+                                'bet' => 0,
+                            ],
+                            2 => [
+                                'user_id' => $this->loserUserId,
+                                'cards' => [],
+                                'folded' => true,
+                                'stack' => 0,
+                                'bet' => 0,
+                            ],
+                        ],
+                    ],
+                ];
+            }
+
+            public function getGameId(): int
+            {
+                return $this->gameId;
+            }
+        };
+
+        $reflection = new ReflectionClass($gameSocket);
+        $gameServices = $reflection->getProperty('gameServices');
+        $gameServices->setAccessible(true);
+        $services = $gameServices->getValue($gameSocket);
+        $services[$this->tableId] = $matchEndService;
+        $gameServices->setValue($gameSocket, $services);
+
+        $gameSocket->onMessage($conn1, json_encode(['type' => 'next_hand']));
+
+        $presenceUpdates = [];
+        foreach ($watcher->sentMessages as $message) {
+            $decoded = json_decode($message, true);
+            if (($decoded['type'] ?? null) !== 'presence' || ($decoded['event'] ?? null) !== 'update') {
+                continue;
+            }
+
+            $user = $decoded['user'] ?? null;
+            $userId = $user['id'] ?? null;
+            if (!is_int($userId) || !in_array($userId, [$this->userId1, $this->userId2], true)) {
+                continue;
+            }
+
+            $presenceUpdates[$userId] = $user;
+        }
+
+        $this->assertSame('online', $presenceUpdates[$this->userId1]['status'] ?? null);
+        $this->assertSame('online', $presenceUpdates[$this->userId2]['status'] ?? null);
+        $this->assertNull($presenceUpdates[$this->userId1]['active_table_id'] ?? null);
+        $this->assertNull($presenceUpdates[$this->userId2]['active_table_id'] ?? null);
     }
 
     public function testPeriodicDisconnectSweepMarksPlayerAwayWithoutFollowUpMessages(): void

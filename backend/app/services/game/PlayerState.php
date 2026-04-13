@@ -21,10 +21,10 @@ final class PlayerState
     /** total chips put in during this hand */
     public int $totalInvested = 0;
 
-    /** NEW: amount contributed to pot (used by WinnerCalculator) */
+    /** Amount contributed to the pot during this hand. */
     public int $contribution = 0;
 
-    /** NEW: link back to user ID */
+    /** Associated application user id. */
     public int $user_id = 0;
 
     public function __construct(int $seat, int $stack)

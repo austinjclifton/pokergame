@@ -118,6 +118,38 @@ final class AuditService {
             throw new RuntimeException('Audit logging failed', 0, $e);
         }
     }
+
+    /**
+     * Best-effort audit logging that never throws into the caller.
+     *
+     * @param array{
+     *   user_id?: int|null,
+     *   session_id?: int|null,
+     *   ip_address?: string|null,
+     *   user_agent?: string|null,
+     *   action: string,
+     *   entity_type?: string|null,
+     *   entity_id?: int|null,
+     *   details?: array|null,
+     *   channel?: 'api'|'websocket',
+     *   status?: 'success'|'failure'|'error',
+     *   severity?: 'info'|'warn'|'error'|'critical'
+     * } $event
+     * @param null|callable(Throwable): void $onFailure
+     */
+    public static function safeLog(PDO $pdo, array $event, string $source = 'AuditService', ?callable $onFailure = null): void
+    {
+        try {
+            (new self($pdo, true))->log($event);
+        } catch (Throwable $e) {
+            if ($onFailure !== null) {
+                $onFailure($e);
+                return;
+            }
+
+            error_log(sprintf('[%s] Audit logging failed: %s', $source, $e->getMessage()));
+        }
+    }
     
     /**
      * Redact sensitive fields from an array recursively.

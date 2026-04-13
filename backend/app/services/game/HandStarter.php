@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/GameState.php';
 require_once __DIR__ . '/cards/DealerService.php';
 require_once __DIR__ . '/engine/BettingEngine.php';
+require_once __DIR__ . '/engine/TurnOrder.php';
 
 final class HandStarter
 {
@@ -50,7 +51,7 @@ final class HandStarter
             sort($seats);
             $state->dealerSeat = $seats[0];
         } else {
-            $state->dealerSeat = self::nextSeat($state->players, $state->dealerSeat);
+            $state->dealerSeat = TurnOrder::nextSeat($state->players, $state->dealerSeat);
         }
 
         // ---------------------------------------------------------
@@ -58,10 +59,10 @@ final class HandStarter
         // ---------------------------------------------------------
         if (count($state->players) === 2) {
             $state->smallBlindSeat = $state->dealerSeat;
-            $state->bigBlindSeat   = self::nextSeat($state->players, $state->dealerSeat);
+            $state->bigBlindSeat   = TurnOrder::nextSeat($state->players, $state->dealerSeat);
         } else {
-            $state->smallBlindSeat = self::nextSeat($state->players, $state->dealerSeat);
-            $state->bigBlindSeat   = self::nextSeat($state->players, $state->smallBlindSeat);
+            $state->smallBlindSeat = TurnOrder::nextSeat($state->players, $state->dealerSeat);
+            $state->bigBlindSeat   = TurnOrder::nextSeat($state->players, $state->smallBlindSeat);
         }
 
         $state->smallBlindAmount = $smallBlind;
@@ -108,27 +109,11 @@ final class HandStarter
         // ---------------------------------------------------------
         // 7. Action starts UTG (first seat after big blind)
         // ---------------------------------------------------------
-        $state->actionSeat = self::nextSeat($state->players, $state->bigBlindSeat);
+        $state->actionSeat = TurnOrder::nextSeat($state->players, $state->bigBlindSeat);
 
         // ---------------------------------------------------------
         // 8. Increment hand counter
         // ---------------------------------------------------------
         $state->handIndex++;
-    }
-
-    /**
-     * Get next seat clockwise.
-     */
-    private static function nextSeat(array $players, int $start): int
-    {
-        $seats = array_keys($players);
-        sort($seats);
-
-        $i = array_search($start, $seats, true);
-        if ($i === false) {
-            return $seats[0];
-        }
-
-        return $seats[($i + 1) % count($seats)];
     }
 }

@@ -70,7 +70,7 @@ final class GameService
     }
 
     // =========================================================================
-    // START A NEW HAND — includes MATCH END PATCH
+    // START A NEW HAND
     // =========================================================================
     public function startHand(?int $seed = null): array
     {
@@ -82,16 +82,7 @@ final class GameService
         }
 
         if ($this->handBootstrapped) {
-            $state = $this->persistence->snapshot($this->state);
-            return [
-                'ok'         => true,
-                'state'      => $state,
-                'handEnded'  => false,
-                'summary'    => null,
-                'matchEnded' => false,
-                'winner'     => null,
-                'loser'      => null,
-            ];
+            return $this->buildStateResult($this->persistence->snapshot($this->state));
         }
 
         // Before starting → detect match end FIRST
@@ -132,20 +123,11 @@ final class GameService
 
         $this->handBootstrapped = true;
 
-        $state = $this->persistence->snapshot($this->state);
-        return [
-            'ok'         => true,
-            'state'      => $state,
-            'handEnded'  => false,
-            'summary'    => null,
-            'matchEnded' => false,
-            'winner'     => null,
-            'loser'      => null,
-        ];
+        return $this->buildStateResult($this->persistence->snapshot($this->state));
     }
 
     // =========================================================================
-    // APPLY ACTION — includes MATCH END PATCH in all ending paths
+    // APPLY ACTION
     // =========================================================================
     public function applyAction(int $seat, string $action, int $amount = 0): array
     {
@@ -173,67 +155,20 @@ final class GameService
         // ---------- 2. Hand ended immediately from fold ----------
         if ($result['handEnded'] ?? false) {
             $summary = $this->buildFoldSummary();
-            $state   = $this->persistence->snapshot($this->state);
-
-            $this->handBootstrapped = false;
-
-            // ⭐ MATCH END CHECK (PATCH)
-            $matchEnd = $this->detectMatchEnd();
-            if ($matchEnd !== null) {
-                return $matchEnd;
-            }
-
-            return [
-                'ok'         => true,
-                'state'      => $state,
-                'handEnded'  => true,
-                'summary'    => $summary,
-                'matchEnded' => false,
-                'winner'     => null,
-                'loser'      => null,
-            ];
+            return $this->buildResolvedHandResult($summary);
         }
 
         // ------------------------- 3. Phase advancement ------------------------
-        $evaluator = new HandEvaluator();
-        $phaseInfo = PhaseEngine::advance($this->state, $evaluator);
+        $phaseInfo = PhaseEngine::advance($this->state);
 
         // ---------- 4. Hand ended because phase reached showdown ----------
         if ($phaseInfo !== null && ($phaseInfo['handEnded'] ?? false)) {
             $summary = $this->runShowdownSettlement();
-            $state   = $this->persistence->snapshot($this->state);
-
-            $this->handBootstrapped = false;
-
-            // ⭐ MATCH END CHECK (PATCH)
-            $matchEnd = $this->detectMatchEnd();
-            if ($matchEnd !== null) {
-                return $matchEnd;
-            }
-
-            return [
-                'ok'         => true,
-                'state'      => $state,
-                'handEnded'  => true,
-                'summary'    => $summary,
-                'matchEnded' => false,
-                'winner'     => null,
-                'loser'      => null,
-            ];
+            return $this->buildResolvedHandResult($summary);
         }
 
         // ---------------------- 5. Normal non-ending action --------------------
-        $state = $this->persistence->snapshot($this->state);
-
-        return [
-            'ok'         => true,
-            'state'      => $state,
-            'handEnded'  => false,
-            'summary'    => null,
-            'matchEnded' => false,
-            'winner'     => null,
-            'loser'      => null,
-        ];
+        return $this->buildStateResult($this->persistence->snapshot($this->state));
     }
 
     public function startNextHand(?int $seed = null): array
@@ -243,8 +178,7 @@ final class GameService
 
     public function advancePhaseIfNeeded(): ?array
     {
-        $evaluator = new HandEvaluator();
-        return PhaseEngine::advance($this->state, $evaluator);
+        return PhaseEngine::advance($this->state);
     }
 
     public function evaluateWinners(): array
@@ -325,20 +259,7 @@ final class GameService
 
         // If somehow no opponent, just treat as trivial match end
         if ($opponent === null) {
-            return [
-                'ok'         => true,
-                'state'      => $this->persistence->snapshot($this->state),
-                'handEnded'  => false,
-                'summary'    => null,
-                'matchEnded' => true,
-                'winner'     => [
-                    'seat'    => $forfeiterSeat,
-                    'user_id' => $forfeiter->user_id,
-                    'stack'   => $forfeiter->stack,
-                ],
-                'loser'      => null,
-                'reason'     => 'forfeit',
-            ];
+            return $this->buildMatchEndResponse($forfeiterSeat, $forfeiter, null, null, 'forfeit');
         }
 
         // Award all remaining chips + pot to opponent
@@ -351,8 +272,8 @@ final class GameService
         // Forfeiter is now effectively "busted"
         $forfeiter->stack = 0;
 
-        // Clear any outstanding pot/bets
-        $this->state->resetPot();
+        // Clear per-street betting state while keeping hand totals intact.
+        $this->state->resetBettingRound();
 
         // No hand is considered active anymore
         $this->handBootstrapped = false;
@@ -365,28 +286,11 @@ final class GameService
         }
 
         // Fallback (should not be hit if heads-up and logic is consistent)
-        return [
-            'ok'         => true,
-            'state'      => $this->persistence->snapshot($this->state),
-            'handEnded'  => false,
-            'summary'    => null,
-            'matchEnded' => true,
-            'winner'     => [
-                'seat'    => $opponentSeat,
-                'user_id' => $opponent->user_id,
-                'stack'   => $opponent->stack,
-            ],
-            'loser'      => [
-                'seat'    => $forfeiterSeat,
-                'user_id' => $forfeiter->user_id,
-                'stack'   => $forfeiter->stack,
-            ],
-            'reason'     => 'forfeit',
-        ];
+        return $this->buildMatchEndResponse($opponentSeat, $opponent, $forfeiterSeat, $forfeiter, 'forfeit');
     }
 
     // =========================================================================
-    // MATCH END DETECTION (HEADS-UP) — CORE OF A PATCH
+    // MATCH END DETECTION (HEADS-UP)
     // =========================================================================
     private function detectMatchEnd(): ?array
     {
@@ -425,24 +329,7 @@ final class GameService
             return null;
         }
 
-        // FINAL match-end object - normalized structure
-        return [
-            'ok'         => true,
-            'state'      => $this->persistence->snapshot($this->state),
-            'handEnded'  => false,
-            'summary'    => null,
-            'matchEnded' => true,
-            'winner'     => [
-                'seat'    => $winnerSeat,
-                'user_id' => $winner->user_id,
-                'stack'   => $winner->stack,
-            ],
-            'loser'      => [
-                'seat'    => $loserSeat,
-                'user_id' => $loser->user_id,
-                'stack'   => $loser->stack,
-            ],
-        ];
+        return $this->buildMatchEndResponse($winnerSeat, $winner, $loserSeat, $loser);
     }
 
     // =========================================================================
@@ -460,21 +347,7 @@ final class GameService
         $winner     = $this->state->players[$winnerSeat];
 
         $winner->stack += $amount;
-        $this->state->resetPot();
-
-        // Build players array for consistency with showdown summary
-        $players = [];
-        foreach ($this->state->players as $seat => $p) {
-            $players[$seat] = [
-                'seat'         => $seat,
-                'user_id'      => $p->user_id,
-                'cards'        => $p->cards,
-                'folded'       => $p->folded,
-                'stack'        => $p->stack,
-                'bet'          => $p->bet ?? 0,
-                'contribution' => $p->contribution,
-            ];
-        }
+        $this->state->resetBettingRound();
 
         $summary = [
             'event'   => 'hand_end',
@@ -487,7 +360,7 @@ final class GameService
                 'handDescription' => 'Wins by fold',
                 'bestHand'        => [],
             ]],
-            'players' => $players,
+            'players' => $this->buildSummaryPlayers(),
         ];
 
         $this->state->lastHandResult = $summary;
@@ -533,7 +406,7 @@ final class GameService
             }
         }
 
-        $this->state->resetPot();
+        $this->state->resetBettingRound();
 
         // Winners list
         $winners = [];
@@ -550,31 +423,102 @@ final class GameService
             }
         }
 
-        // Full per-hand summary
-        $players = [];
-        foreach ($this->state->players as $seat => $p) {
-            $players[$seat] = [
-                'seat'         => $seat,
-                'user_id'      => $p->user_id,
-                'cards'        => $p->cards,
-                'folded'       => $p->folded,
-                'stack'        => $p->stack,
-                'bet'          => $p->bet ?? 0,
-                'contribution' => $p->contribution,
-            ];
-        }
-
         $summary = [
             'event'   => 'hand_end',
             'reason'  => 'showdown',
             'pot'     => $wc['totalPot'],
             'board'   => $this->state->board,
             'winners' => $winners,
-            'players' => $players,
+            'players' => $this->buildSummaryPlayers(),
         ];
 
         $this->state->lastHandResult = $summary;
 
         return $summary;
+    }
+
+    private function buildStateResult(array $state, bool $handEnded = false, ?array $summary = null): array
+    {
+        return [
+            'ok'         => true,
+            'state'      => $state,
+            'handEnded'  => $handEnded,
+            'summary'    => $summary,
+            'matchEnded' => false,
+            'winner'     => null,
+            'loser'      => null,
+        ];
+    }
+
+    private function buildResolvedHandResult(array $summary): array
+    {
+        $this->handBootstrapped = false;
+
+        $matchEnd = $this->detectMatchEnd();
+        if ($matchEnd !== null) {
+            return $matchEnd;
+        }
+
+        return $this->buildStateResult(
+            $this->persistence->snapshot($this->state),
+            true,
+            $summary
+        );
+    }
+
+    private function buildMatchEndResponse(
+        ?int $winnerSeat,
+        ?PlayerState $winner,
+        ?int $loserSeat,
+        ?PlayerState $loser,
+        ?string $reason = null
+    ): array {
+        $response = [
+            'ok'         => true,
+            'state'      => $this->persistence->snapshot($this->state),
+            'handEnded'  => false,
+            'summary'    => null,
+            'matchEnded' => true,
+            'winner'     => $winnerSeat === null || $winner === null
+                ? null
+                : [
+                    'seat'    => $winnerSeat,
+                    'user_id' => $winner->user_id,
+                    'stack'   => $winner->stack,
+                ],
+            'loser'      => $loserSeat === null || $loser === null
+                ? null
+                : [
+                    'seat'    => $loserSeat,
+                    'user_id' => $loser->user_id,
+                    'stack'   => $loser->stack,
+                ],
+        ];
+
+        if ($reason !== null) {
+            $response['reason'] = $reason;
+        }
+
+        return $response;
+    }
+
+    /** @return array<int, array{seat:int,user_id:int,cards:array<string>,folded:bool,stack:int,bet:int,contribution:int}> */
+    private function buildSummaryPlayers(): array
+    {
+        $players = [];
+
+        foreach ($this->state->players as $seat => $player) {
+            $players[$seat] = [
+                'seat' => $seat,
+                'user_id' => $player->user_id,
+                'cards' => $player->cards,
+                'folded' => $player->folded,
+                'stack' => $player->stack,
+                'bet' => $player->bet,
+                'contribution' => $player->contribution,
+            ];
+        }
+
+        return $players;
     }
 }

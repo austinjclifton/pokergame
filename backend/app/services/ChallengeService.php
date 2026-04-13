@@ -41,24 +41,20 @@ final class ChallengeService {
 
         $challengeId = db_insert_challenge($this->pdo, $fromUserId, $toUserId);
         
-        try {
-            log_audit_event($this->pdo, [
-                'user_id' => $fromUserId,
-                'action' => 'challenge.create',
-                'entity_type' => 'challenge',
-                'entity_id' => $challengeId,
-                'details' => [
-                    'from_user_id' => $fromUserId,
-                    'to_user_id' => $toUserId,
-                    'to_username' => $toUsername,
-                ],
-                'channel' => 'websocket',
-                'status' => 'success',
-                'severity' => 'info',
-            ]);
-        } catch (Throwable $e) {
-            error_log('[ChallengeService] Audit logging failed: ' . $e->getMessage());
-        }
+        AuditService::safeLog($this->pdo, [
+            'user_id' => $fromUserId,
+            'action' => 'challenge.create',
+            'entity_type' => 'challenge',
+            'entity_id' => $challengeId,
+            'details' => [
+                'from_user_id' => $fromUserId,
+                'to_user_id' => $toUserId,
+                'to_username' => $toUsername,
+            ],
+            'channel' => 'websocket',
+            'status' => 'success',
+            'severity' => 'info',
+        ], 'ChallengeService');
         
         // Note: WebSocket notifications are handled by the WebSocket handler (LobbySocket.php)
         // when challenges are sent via WebSocket. REST API challenges don't trigger WebSocket
@@ -139,24 +135,20 @@ final class ChallengeService {
             return ['ok' => false, 'message' => 'Failed to create game: ' . $e->getMessage()];
         }
 
-        try {
-            log_audit_event($this->pdo, [
-                'user_id' => $acceptingUserId,
-                'action' => 'challenge.accept',
-                'entity_type' => 'challenge',
-                'entity_id' => $challengeId,
-                'details' => [
-                    'from_user_id' => $fromUserId,
-                    'to_user_id' => $toUserId,
-                    'table_id' => $tableId,
-                ],
-                'channel' => 'websocket',
-                'status' => 'success',
-                'severity' => 'info',
-            ]);
-        } catch (Throwable $e) {
-            error_log('[ChallengeService] Audit logging failed: ' . $e->getMessage());
-        }
+        AuditService::safeLog($this->pdo, [
+            'user_id' => $acceptingUserId,
+            'action' => 'challenge.accept',
+            'entity_type' => 'challenge',
+            'entity_id' => $challengeId,
+            'details' => [
+                'from_user_id' => $fromUserId,
+                'to_user_id' => $toUserId,
+                'table_id' => $tableId,
+            ],
+            'channel' => 'websocket',
+            'status' => 'success',
+            'severity' => 'info',
+        ], 'ChallengeService');
 
         // Return table_id and game_id so clients can redirect
         return ['ok' => true, 'table_id' => $tableId, 'game_id' => $gameId];
@@ -172,23 +164,19 @@ final class ChallengeService {
 
         db_mark_challenge_status($this->pdo, $challengeId, 'declined');
         
-        try {
-            log_audit_event($this->pdo, [
-                'user_id' => $decliningUserId,
-                'action' => 'challenge.decline',
-                'entity_type' => 'challenge',
-                'entity_id' => $challengeId,
-                'details' => [
-                    'from_user_id' => (int)$ch['from_user_id'],
-                    'to_user_id' => (int)$ch['to_user_id'],
-                ],
-                'channel' => 'websocket',
-                'status' => 'success',
-                'severity' => 'info',
-            ]);
-        } catch (Throwable $e) {
-            error_log('[ChallengeService] Audit logging failed: ' . $e->getMessage());
-        }
+        AuditService::safeLog($this->pdo, [
+            'user_id' => $decliningUserId,
+            'action' => 'challenge.decline',
+            'entity_type' => 'challenge',
+            'entity_id' => $challengeId,
+            'details' => [
+                'from_user_id' => (int)$ch['from_user_id'],
+                'to_user_id' => (int)$ch['to_user_id'],
+            ],
+            'channel' => 'websocket',
+            'status' => 'success',
+            'severity' => 'info',
+        ], 'ChallengeService');
         
         return ['ok' => true];
     }
@@ -203,23 +191,19 @@ final class ChallengeService {
 
         db_mark_challenge_status($this->pdo, $challengeId, 'declined');
         
-        try {
-            log_audit_event($this->pdo, [
-                'user_id' => $cancellingUserId,
-                'action' => 'challenge.cancel',
-                'entity_type' => 'challenge',
-                'entity_id' => $challengeId,
-                'details' => [
-                    'from_user_id' => (int)$ch['from_user_id'],
-                    'to_user_id' => (int)$ch['to_user_id'],
-                ],
-                'channel' => 'websocket',
-                'status' => 'success',
-                'severity' => 'info',
-            ]);
-        } catch (Throwable $e) {
-            error_log('[ChallengeService] Audit logging failed: ' . $e->getMessage());
-        }
+        AuditService::safeLog($this->pdo, [
+            'user_id' => $cancellingUserId,
+            'action' => 'challenge.cancel',
+            'entity_type' => 'challenge',
+            'entity_id' => $challengeId,
+            'details' => [
+                'from_user_id' => (int)$ch['from_user_id'],
+                'to_user_id' => (int)$ch['to_user_id'],
+            ],
+            'channel' => 'websocket',
+            'status' => 'success',
+            'severity' => 'info',
+        ], 'ChallengeService');
         
         return ['ok' => true];
     }

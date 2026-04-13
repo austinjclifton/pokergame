@@ -402,5 +402,50 @@ final class APIEndpointHttpTest extends TestCase
         $this->assertFalse($data['ok'] ?? true);
         $this->assertEquals('method_not_allowed', $data['error'] ?? '');
     }
+
+    public function testAuditReturns401WhenUnauthenticated(): void
+    {
+        $res = run_endpoint(
+            __DIR__ . '/../../../public/api/audit.php',
+            ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => '127.0.0.1']
+        );
+
+        $this->assertSame(401, $res['status'], 'Should return 401 Unauthorized');
+
+        $data = json_decode($res['body'], true);
+        $this->assertIsArray($data);
+        $this->assertFalse($data['ok'] ?? true);
+        $this->assertSame('unauthorized', $data['error'] ?? null);
+    }
+
+    public function testAuditReturns403ForNonAdminUser(): void
+    {
+        $userId = $this->createTestUser('audit_non_admin');
+        $ip = '127.0.0.1';
+        $userAgent = 'PHPUnit Test';
+        $ipHash = hash('sha256', $ip);
+        $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
+        $sessionId = db_insert_session($this->pdo, $userId, $ipHash, $userAgent, $expiresAt);
+
+        if ($this->pdo->inTransaction()) {
+            $this->pdo->commit();
+            $this->pdo->beginTransaction();
+        }
+
+        $res = run_endpoint(
+            __DIR__ . '/../../../public/api/audit.php',
+            ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => $ip, 'HTTP_USER_AGENT' => $userAgent],
+            [],
+            [],
+            ['session_id' => (string) $sessionId]
+        );
+
+        $this->assertSame(403, $res['status'], 'Should return 403 Forbidden for non-admin users');
+
+        $data = json_decode($res['body'], true);
+        $this->assertIsArray($data);
+        $this->assertFalse($data['ok'] ?? true);
+        $this->assertSame('forbidden', $data['error'] ?? null);
+    }
 }
 

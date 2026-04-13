@@ -16,6 +16,7 @@ require_once __DIR__ . '/../app/services/SocketPresenceService.php';
 require_once __DIR__ . '/../app/services/SubscriptionService.php';
 require_once __DIR__ . '/../app/services/ChallengeService.php';
 require_once __DIR__ . '/../app/services/AuditService.php';
+require_once __DIR__ . '/../app/services/LobbyService.php';
 require_once __DIR__ . '/../app/db/chat_messages.php';
 require_once __DIR__ . '/../app/db/challenges.php';
 require_once __DIR__ . '/../app/db/users.php';
@@ -101,24 +102,19 @@ class LobbySocket implements MessageComponentInterface
 
             $this->subscriptionService->register($uid, (string)$rid, 'lobby', 0);
 
-            // Audit log: WebSocket connection
-            try {
-                log_audit_event($this->pdo, [
-                    'user_id' => $uid,
-                    'session_id' => $sid,
-                    'action' => 'websocket.connect',
-                    'entity_type' => 'websocket_connection',
-                    'details' => [
-                        'connection_id' => (string)$rid,
-                        'channel_type' => 'lobby',
-                    ],
-                    'channel' => 'websocket',
-                    'status' => 'success',
-                    'severity' => 'info',
-                ]);
-            } catch (\Throwable $e) {
-                WebSocketLog::warn('LobbySocket', 'Audit logging failed on connect: ' . $e->getMessage());
-            }
+            $this->safeAuditLog([
+                'user_id' => $uid,
+                'session_id' => $sid,
+                'action' => 'websocket.connect',
+                'entity_type' => 'websocket_connection',
+                'details' => [
+                    'connection_id' => (string)$rid,
+                    'channel_type' => 'lobby',
+                ],
+                'channel' => 'websocket',
+                'status' => 'success',
+                'severity' => 'info',
+            ], 'connect');
 
             $presenceUser = $this->presenceService->syncLobbyConnection($uid, $uname);
 
@@ -186,22 +182,17 @@ class LobbySocket implements MessageComponentInterface
         }
 
         if (!$this->rateAllow($rid)) {
-            // Audit log: rate limit exceeded
-            try {
-                log_audit_event($this->pdo, [
-                    'user_id' => $info['user_id'] ?? null,
-                    'action' => 'rate_limit.exceeded',
-                    'details' => [
-                        'channel' => 'websocket',
-                        'connection_id' => (string)$rid,
-                    ],
+            $this->safeAuditLog([
+                'user_id' => $info['user_id'] ?? null,
+                'action' => 'rate_limit.exceeded',
+                'details' => [
                     'channel' => 'websocket',
-                    'status' => 'failure',
-                    'severity' => 'warn',
-                ]);
-            } catch (\Throwable $e) {
-                WebSocketLog::warn('LobbySocket', 'Audit logging failed on rate limit: ' . $e->getMessage());
-            }
+                    'connection_id' => (string)$rid,
+                ],
+                'channel' => 'websocket',
+                'status' => 'failure',
+                'severity' => 'warn',
+            ], 'rate limit');
             $this->sendError($from, 'rate_limited');
             return;
         }
@@ -263,38 +254,32 @@ class LobbySocket implements MessageComponentInterface
             return;
         }
 
-        $messageId = db_insert_chat_message($this->pdo, 'lobby', 0, $userId, $text, null, $username);
+        $message = lobby_record_message($this->pdo, $userId, $text);
+        $messageId = isset($message['id']) ? (int) $message['id'] : null;
 
-        try {
-            log_audit_event($this->pdo, [
-                'user_id' => $userId,
-                'session_id' => $info['session_id'],
-                'action' => 'chat.send',
-                'entity_type' => 'chat_message',
-                'entity_id' => $messageId,
-                'details' => [
-                    'channel_type' => 'lobby',
-                    'channel_id' => 0,
-                    'message_length' => mb_strlen($text),
-                ],
-                'channel' => 'websocket',
-                'status' => 'success',
-                'severity' => 'info',
-            ]);
-        } catch (\Throwable $e) {
-            WebSocketLog::warn('LobbySocket', 'Audit logging failed on chat: ' . $e->getMessage());
-        }
+        $this->safeAuditLog([
+            'user_id' => $userId,
+            'session_id' => $info['session_id'],
+            'action' => 'chat.send',
+            'entity_type' => 'chat_message',
+            'entity_id' => $messageId,
+            'details' => [
+                'channel_type' => 'lobby',
+                'channel_id' => 0,
+                'message_length' => mb_strlen($text),
+            ],
+            'channel' => 'websocket',
+            'status' => 'success',
+            'severity' => 'info',
+        ], 'chat');
 
-        $statement = $this->pdo->prepare("SELECT created_at FROM chat_messages WHERE id = :id LIMIT 1");
-        $statement->execute(['id' => $messageId]);
-        $row = $statement->fetch(PDO::FETCH_ASSOC);
-        $createdAt = $row ? $row['created_at'] : date('Y-m-d H:i:s');
+        $createdAt = (string) ($message['created_at'] ?? date('Y-m-d H:i:s'));
         $timestamp = strtotime($createdAt);
 
         $this->broadcast([
             'type' => 'chat',
-            'from' => escape_html($username),
-            'msg' => escape_html($text),
+            'from' => escape_html((string) ($message['sender_username'] ?? $username)),
+            'msg' => escape_html((string) ($message['body'] ?? $text)),
             'time' => date('H:i', $timestamp),
             'created_at' => $createdAt,
         ]);
@@ -524,23 +509,18 @@ class LobbySocket implements MessageComponentInterface
             
             // Only mark offline if this was their last connection
             if (!$hasOtherConnections) {
-                // Audit log: WebSocket disconnection
-                try {
-                    log_audit_event($this->pdo, [
-                        'user_id' => $uid,
-                        'action' => 'websocket.disconnect',
-                        'entity_type' => 'websocket_connection',
-                        'details' => [
-                            'connection_id' => (string)$rid,
-                            'was_explicit_logout' => $wasExplicitLogout ?? false,
-                        ],
-                        'channel' => 'websocket',
-                        'status' => 'success',
-                        'severity' => 'info',
-                    ]);
-                } catch (\Throwable $e) {
-                    WebSocketLog::warn('LobbySocket', 'Audit logging failed on disconnect: ' . $e->getMessage());
-                }
+                $this->safeAuditLog([
+                    'user_id' => $uid,
+                    'action' => 'websocket.disconnect',
+                    'entity_type' => 'websocket_connection',
+                    'details' => [
+                        'connection_id' => (string)$rid,
+                        'was_explicit_logout' => $wasExplicitLogout ?? false,
+                    ],
+                    'channel' => 'websocket',
+                    'status' => 'success',
+                    'severity' => 'info',
+                ], 'disconnect');
                 
                 // Track disconnect time if it was NOT an explicit logout (to detect quick reconnects)
                 if (!$wasExplicitLogout) {
@@ -716,6 +696,18 @@ class LobbySocket implements MessageComponentInterface
             'time' => date('H:i'),
             'created_at' => date('Y-m-d H:i:s'),
         ];
+    }
+
+    private function safeAuditLog(array $event, string $context): void
+    {
+        AuditService::safeLog(
+            $this->pdo,
+            $event,
+            'LobbySocket',
+            static function (\Throwable $e) use ($context): void {
+                WebSocketLog::warn('LobbySocket', sprintf('Audit logging failed on %s: %s', $context, $e->getMessage()));
+            }
+        );
     }
 
     /** Send JSON to a single user by user_id. */

@@ -105,6 +105,30 @@ function db_get_recent_chat_messages(
 }
 
 /**
+ * Fetch a single chat message by id.
+ *
+ * @return array<string, mixed>|null
+ */
+function db_get_chat_message_by_id(PDO $pdo, int $messageId): ?array {
+    $stmt = $pdo->prepare('
+        SELECT id,
+               channel_type,
+               channel_id,
+               sender_user_id,
+               sender_username,
+               body,
+               created_at
+        FROM chat_messages
+        WHERE id = :id
+        LIMIT 1
+    ');
+    $stmt->execute(['id' => $messageId]);
+
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row ?: null;
+}
+
+/**
  * Delete chat messages older than a cutoff (for cleanup)
  *
  * @param PDO $pdo

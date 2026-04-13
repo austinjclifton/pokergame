@@ -28,7 +28,7 @@ final class GameServiceTest extends TestCase
         require_once __DIR__ . '/../../app/services/game/cards/DealerService.php';
         require_once __DIR__ . '/../../app/services/game/cards/HandEvaluator.php';
         require_once __DIR__ . '/../../app/services/game/engine/BettingEngine.php';
-        require_once __DIR__ . '/../../app/services/game/engine/PhaseManager.php';
+        require_once __DIR__ . '/../../app/services/game/engine/TurnOrder.php';
         require_once __DIR__ . '/../../app/services/game/GamePersistence.php';
         require_once __DIR__ . '/../../app/services/game/rules/WinnerCalculator.php';
         require_once __DIR__ . '/../../app/services/game/GameService.php';
