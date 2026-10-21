@@ -10,6 +10,10 @@
 namespace PHPUnit\Framework;
 
 use function assert;
+use function hash_equals;
+use function sprintf;
+use function strlen;
+use function substr;
 use function trim;
 use function unserialize;
 use PHPUnit\Event\Code\TestMethodBuilder;
@@ -18,6 +22,7 @@ use PHPUnit\Event\Emitter;
 use PHPUnit\Event\Facade;
 use PHPUnit\Runner\CodeCoverage;
 use PHPUnit\TestRunner\TestResult\PassedTests;
+use Throwable;
 
 /**
  * @no-named-arguments Parameter names are not covered by the backward compatibility promise for PHPUnit
@@ -37,7 +42,10 @@ final readonly class ChildProcessResultProcessor
         $this->codeCoverage = $codeCoverage;
     }
 
-    public function process(Test $test, string $serializedProcessResult, string $stderr): void
+    /**
+     * @param ?non-empty-string $processResultNonce
+     */
+    public function process(Test $test, string $serializedProcessResult, string $stderr, ?string $processResultNonce = null): void
     {
         if ($stderr !== '') {
             $exception = new Exception(trim($stderr));
@@ -52,7 +60,66 @@ final readonly class ChildProcessResultProcessor
             return;
         }
 
-        $childResult = @unserialize($serializedProcessResult);
+        if ($processResultNonce !== null && $serializedProcessResult !== '') {
+            $nonceLength = strlen($processResultNonce);
+
+            if (strlen($serializedProcessResult) < $nonceLength ||
+                !hash_equals($processResultNonce, substr($serializedProcessResult, 0, $nonceLength))) {
+                $this->emitter->childProcessErrored();
+
+                $exception = new AssertionFailedError(
+                    'Test was run in child process and the result file was tampered with or written by an unexpected process',
+                );
+
+                assert($test instanceof TestCase);
+
+                $this->emitter->testErrored(
+                    TestMethodBuilder::fromTestCase($test),
+                    ThrowableBuilder::from($exception),
+                );
+
+                $this->emitter->testFinished(
+                    TestMethodBuilder::fromTestCase($test),
+                    0,
+                );
+
+                return;
+            }
+
+            $serializedProcessResult = substr($serializedProcessResult, $nonceLength);
+        }
+
+        try {
+            $childResult = @unserialize($serializedProcessResult);
+        } catch (Throwable $t) {
+            // An object can only be unserialized when its class exists in this
+            // process: an object of a test double class, which only exists in
+            // the child process, cannot be assigned to a property whose type it
+            // was declared to satisfy, for instance an object that a test
+            // returned and that holds a test double.
+            $this->emitter->childProcessErrored();
+
+            $exception = new AssertionFailedError(
+                sprintf(
+                    'Test was run in child process and its result could not be unserialized: %s',
+                    $t->getMessage(),
+                ),
+            );
+
+            assert($test instanceof TestCase);
+
+            $this->emitter->testErrored(
+                TestMethodBuilder::fromTestCase($test),
+                ThrowableBuilder::from($exception),
+            );
+
+            $this->emitter->testFinished(
+                TestMethodBuilder::fromTestCase($test),
+                0,
+            );
+
+            return;
+        }
 
         if ($childResult === false) {
             $this->emitter->childProcessErrored();
@@ -86,11 +153,18 @@ final readonly class ChildProcessResultProcessor
             return;
         }
 
-        // @codeCoverageIgnoreStart
         if (!$childResult->codeCoverage instanceof \SebastianBergmann\CodeCoverage\CodeCoverage) {
+            $this->emitter->testRunnerTriggeredPhpunitWarning(
+                sprintf(
+                    'Code coverage could not be collected for %s',
+                    TestMethodBuilder::fromTestCase($test)->id(),
+                ),
+            );
+
             return;
         }
 
+        // @codeCoverageIgnoreStart
         CodeCoverage::instance()->codeCoverage()->merge(
             $childResult->codeCoverage,
         );

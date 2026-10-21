@@ -27,7 +27,9 @@ use function trim;
 use PHPUnit\Event\Code\Test;
 use PHPUnit\Event\Code\TestMethod;
 use PHPUnit\Event\Test\AfterLastTestMethodErrored;
+use PHPUnit\Event\Test\AfterLastTestMethodFailed;
 use PHPUnit\Event\Test\BeforeFirstTestMethodErrored;
+use PHPUnit\Event\Test\BeforeFirstTestMethodFailed;
 use PHPUnit\Event\Test\ConsideredRisky;
 use PHPUnit\Event\Test\DeprecationTriggered;
 use PHPUnit\Event\Test\ErrorTriggered;
@@ -43,6 +45,7 @@ use PHPUnit\Event\Test\WarningTriggered;
 use PHPUnit\TestRunner\TestResult\Issues\Issue;
 use PHPUnit\TestRunner\TestResult\TestResult;
 use PHPUnit\TextUI\Output\Printer;
+use PHPUnit\Util\Sanitizer;
 
 /**
  * @no-named-arguments Parameter names are not covered by the backward compatibility promise for PHPUnit
@@ -326,6 +329,12 @@ final class ResultPrinter
         $elements = [];
 
         foreach ($result->testFailedEvents() as $event) {
+            if ($event instanceof AfterLastTestMethodFailed || $event instanceof BeforeFirstTestMethodFailed) {
+                $title = $event->testClassName();
+            } else {
+                $title = $this->name($event->test());
+            }
+
             $body = $event->throwable()->asString();
 
             if (str_starts_with($body, 'AssertionError: ')) {
@@ -333,7 +342,7 @@ final class ResultPrinter
             }
 
             $elements[] = [
-                'title' => $this->name($event->test()),
+                'title' => $title,
                 'body'  => $body,
             ];
         }
@@ -544,7 +553,8 @@ final class ResultPrinter
 
     private function printListElement(int $number, string $title, string $body): void
     {
-        $body = trim($body);
+        $title = Sanitizer::sanitizeControlCharacters($title);
+        $body  = Sanitizer::sanitizeControlCharacters(trim($body));
 
         $this->printer->print(
             sprintf(
@@ -560,7 +570,8 @@ final class ResultPrinter
 
     private function printIssueListElement(int $number, string $title, string $body): void
     {
-        $body = trim($body);
+        $title = Sanitizer::sanitizeControlCharacters($title);
+        $body  = Sanitizer::sanitizeControlCharacters(trim($body));
 
         $this->printer->print(
             sprintf(

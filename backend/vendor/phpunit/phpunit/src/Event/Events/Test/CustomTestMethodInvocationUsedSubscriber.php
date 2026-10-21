@@ -7,25 +7,14 @@
  * For the full copyright and license information, please view the LICENSE
  * file that was distributed with this source code.
  */
-namespace PHPUnit\Event\Code\IssueTrigger;
+namespace PHPUnit\Event\Test;
+
+use PHPUnit\Event\Subscriber;
 
 /**
- * @immutable
- *
  * @no-named-arguments Parameter names are not covered by the backward compatibility promise for PHPUnit
  */
-final class TestTrigger extends IssueTrigger
+interface CustomTestMethodInvocationUsedSubscriber extends Subscriber
 {
-    /**
-     * Your test code triggers an issue.
-     */
-    public function isTest(): true
-    {
-        return true;
-    }
-
-    public function asString(): string
-    {
-        return 'issue triggered by test code';
-    }
+    public function notify(CustomTestMethodInvocationUsed $event): void;
 }

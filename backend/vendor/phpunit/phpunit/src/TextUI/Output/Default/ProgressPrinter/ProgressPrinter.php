@@ -25,6 +25,7 @@ use PHPUnit\Event\Test\PhpWarningTriggered;
 use PHPUnit\Event\Test\WarningTriggered;
 use PHPUnit\Event\TestRunner\ChildProcessErrored;
 use PHPUnit\Event\TestRunner\ExecutionStarted;
+use PHPUnit\Event\TestSuite\Started as TestSuiteStarted;
 use PHPUnit\Framework\TestStatus\TestStatus;
 use PHPUnit\TextUI\Configuration\Source;
 use PHPUnit\TextUI\Configuration\SourceFilter;
@@ -51,6 +52,14 @@ final class ProgressPrinter
     private bool $prepared            = false;
     private bool $childProcessErrored = false;
 
+    /**
+     * When a before-first-test method errors or fails, none of the tests of
+     * its test class, the test class that was started last, are run.
+     *
+     * @var non-negative-int
+     */
+    private int $numberOfTestsOfTestClass = 0;
+
     public function __construct(Printer $printer, Facade $facade, bool $colors, int $numberOfColumns, Source $source)
     {
         $this->printer         = $printer;
@@ -70,10 +79,27 @@ final class ProgressPrinter
         $this->maxColumn          = $this->numberOfColumns - strlen('  /  (XXX%)') - (2 * $this->numberOfTestsWidth);
     }
 
+    public function testSuiteStarted(TestSuiteStarted $event): void
+    {
+        if (!$event->testSuite()->isForTestClass()) {
+            return;
+        }
+
+        $this->numberOfTestsOfTestClass = $event->testSuite()->count();
+    }
+
     public function beforeTestClassMethodErrored(): void
     {
-        $this->printProgressForError();
-        $this->updateTestStatus(TestStatus::error());
+        for ($i = 0; $i < $this->numberOfTestsOfTestClass; $i++) {
+            $this->printProgressForError();
+        }
+    }
+
+    public function beforeTestClassMethodFailed(): void
+    {
+        for ($i = 0; $i < $this->numberOfTestsOfTestClass; $i++) {
+            $this->printProgressForFailure();
+        }
     }
 
     public function testPrepared(): void
@@ -90,9 +116,20 @@ final class ProgressPrinter
         }
     }
 
+    public function testSuiteSkipped(int $countTests): void
+    {
+        for ($i = 0; $i < $countTests; $i++) {
+            $this->testSkipped();
+        }
+    }
+
     public function testMarkedIncomplete(): void
     {
-        $this->updateTestStatus(TestStatus::incomplete());
+        if (!$this->prepared) {
+            $this->printProgressForIncomplete();
+        } else {
+            $this->updateTestStatus(TestStatus::incomplete());
+        }
     }
 
     public function testTriggeredNotice(NoticeTriggered $event): void
@@ -137,8 +174,7 @@ final class ProgressPrinter
             return;
         }
 
-        if ($this->source->ignoreSelfDeprecations() &&
-            ($event->trigger()->isTest() || $event->trigger()->isSelf())) {
+        if ($this->source->ignoreSelfDeprecations() && $event->trigger()->isSelf()) {
             return;
         }
 
@@ -163,8 +199,7 @@ final class ProgressPrinter
             return;
         }
 
-        if ($this->source->ignoreSelfDeprecations() &&
-            ($event->trigger()->isTest() || $event->trigger()->isSelf())) {
+        if ($this->source->ignoreSelfDeprecations() && $event->trigger()->isSelf()) {
             return;
         }
 
@@ -186,6 +221,11 @@ final class ProgressPrinter
     public function testTriggeredPhpunitDeprecation(): void
     {
         $this->updateTestStatus(TestStatus::deprecation());
+    }
+
+    public function testTriggeredPhpunitNotice(): void
+    {
+        $this->updateTestStatus(TestStatus::notice());
     }
 
     public function testConsideredRisky(): void
@@ -303,6 +343,7 @@ final class ProgressPrinter
     {
         $facade->registerSubscribers(
             new BeforeTestClassMethodErroredSubscriber($this),
+            new BeforeTestClassMethodFailedSubscriber($this),
             new TestConsideredRiskySubscriber($this),
             new TestErroredSubscriber($this),
             new TestFailedSubscriber($this),
@@ -311,11 +352,14 @@ final class ProgressPrinter
             new TestPreparedSubscriber($this),
             new TestRunnerExecutionStartedSubscriber($this),
             new TestSkippedSubscriber($this),
+            new TestSuiteSkippedSubscriber($this),
+            new TestSuiteStartedSubscriber($this),
             new TestTriggeredDeprecationSubscriber($this),
             new TestTriggeredNoticeSubscriber($this),
             new TestTriggeredPhpDeprecationSubscriber($this),
             new TestTriggeredPhpNoticeSubscriber($this),
             new TestTriggeredPhpunitDeprecationSubscriber($this),
+            new TestTriggeredPhpunitNoticeSubscriber($this),
             new TestTriggeredPhpunitWarningSubscriber($this),
             new TestTriggeredPhpWarningSubscriber($this),
             new TestTriggeredWarningSubscriber($this),

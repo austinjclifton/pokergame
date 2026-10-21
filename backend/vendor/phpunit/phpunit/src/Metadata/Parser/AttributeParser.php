@@ -23,6 +23,7 @@ use Error;
 use PHPUnit\Event\Facade as EventFacade;
 use PHPUnit\Framework\Attributes\After;
 use PHPUnit\Framework\Attributes\AfterClass;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\Attributes\BackupGlobals;
 use PHPUnit\Framework\Attributes\BackupStaticProperties;
 use PHPUnit\Framework\Attributes\Before;
@@ -90,6 +91,7 @@ use PHPUnit\Framework\Attributes\UsesTrait;
 use PHPUnit\Framework\Attributes\WithEnvironmentVariable;
 use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Metadata\InvalidAttributeException;
+use PHPUnit\Metadata\InvalidVersionRequirementException;
 use PHPUnit\Metadata\Metadata;
 use PHPUnit\Metadata\MetadataCollection;
 use PHPUnit\Metadata\Version\Requirement;
@@ -139,6 +141,13 @@ final readonly class AttributeParser implements Parser
             }
 
             switch ($attribute->getName()) {
+                case AllowMockObjectsWithoutExpectations::class:
+                    assert($attributeInstance instanceof AllowMockObjectsWithoutExpectations);
+
+                    $result[] = Metadata::allowMockObjectsWithoutExpectationsOnClass();
+
+                    break;
+
                 case BackupGlobals::class:
                     assert($attributeInstance instanceof BackupGlobals);
 
@@ -555,6 +564,13 @@ final readonly class AttributeParser implements Parser
                     assert($attributeInstance instanceof AfterClass);
 
                     $result[] = Metadata::afterClass($attributeInstance->priority());
+
+                    break;
+
+                case AllowMockObjectsWithoutExpectations::class:
+                    assert($attributeInstance instanceof AllowMockObjectsWithoutExpectations);
+
+                    $result[] = Metadata::allowMockObjectsWithoutExpectationsOnMethod();
 
                     break;
 
@@ -979,7 +995,17 @@ final readonly class AttributeParser implements Parser
             );
         }
 
-        return Requirement::from($versionRequirement);
+        try {
+            return Requirement::from($versionRequirement);
+        } catch (InvalidVersionRequirementException) {
+            throw new InvalidVersionRequirementException(
+                sprintf(
+                    'Test %s has attribute with invalid version constraint argument ("%s")',
+                    $this->testAsString($testClassName, $testMethodName),
+                    $versionRequirement,
+                ),
+            );
+        }
     }
 
     /**

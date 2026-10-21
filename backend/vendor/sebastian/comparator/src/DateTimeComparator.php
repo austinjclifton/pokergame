@@ -12,6 +12,7 @@ namespace SebastianBergmann\Comparator;
 use function abs;
 use function assert;
 use function floor;
+use function in_array;
 use function sprintf;
 use DateInterval;
 use DateTime;
@@ -41,7 +42,16 @@ final class DateTimeComparator extends ObjectComparator
         assert($expected instanceof DateTime || $expected instanceof DateTimeImmutable);
         assert($actual instanceof DateTime || $actual instanceof DateTimeImmutable);
 
+        if (in_array([$actual, $expected], $processed, true) ||
+            in_array([$expected, $actual], $processed, true)) {
+            return;
+        }
+
+        $processed[] = [$actual, $expected];
+
         $absDelta = abs($delta);
+
+        /** @phpstan-ignore argument.type */
         $delta    = new DateInterval(sprintf('PT%dS', $absDelta));
         $delta->f = $absDelta - floor($absDelta);
 

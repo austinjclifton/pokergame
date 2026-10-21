@@ -15,12 +15,10 @@ use function array_pop;
 use function array_reverse;
 use function assert;
 use function call_user_func;
-use function class_exists;
 use function count;
 use function implode;
 use function is_callable;
 use function is_file;
-use function is_subclass_of;
 use function sprintf;
 use function str_ends_with;
 use function str_starts_with;
@@ -50,7 +48,7 @@ use SebastianBergmann\CodeCoverage\UnintentionallyCoveredCodeException;
 use Throwable;
 
 /**
- * @template-implements IteratorAggregate<int, Test>
+ * @template-implements IteratorAggregate<non-negative-int, Test>
  *
  * @no-named-arguments Parameter names are not covered by the backward compatibility promise for PHPUnit
  *
@@ -86,6 +84,14 @@ class TestSuite implements IteratorAggregate, Reorderable, Test
     private bool $wasRun             = false;
 
     /**
+     * Whether this test suite holds the tests of a test class, which is only
+     * known from how it was created: a test suite that merely has the name of
+     * a test class, such as a test suite of the XML configuration file that
+     * is named like the test class it holds, is not for that test class.
+     */
+    private bool $isForTestClass = false;
+
+    /**
      * @param non-empty-string $name
      */
     public static function empty(string $name): static
@@ -100,6 +106,8 @@ class TestSuite implements IteratorAggregate, Reorderable, Test
     public static function fromClassReflector(ReflectionClass $class, array $groups = []): static
     {
         $testSuite = new static($class->getName());
+
+        $testSuite->isForTestClass = true;
 
         foreach (Reflection::publicMethodsDeclaredDirectlyInTestClass($class) as $method) {
             if (!TestUtil::isTestMethod($method)) {
@@ -410,7 +418,7 @@ class TestSuite implements IteratorAggregate, Reorderable, Test
     }
 
     /**
-     * Returns an iterator for this test suite.
+     * @return Iterator<non-negative-int, Test>
      */
     public function getIterator(): Iterator
     {
@@ -497,7 +505,7 @@ class TestSuite implements IteratorAggregate, Reorderable, Test
      */
     public function isForTestClass(): bool
     {
-        return class_exists($this->name, false) && is_subclass_of($this->name, TestCase::class);
+        return $this->isForTestClass;
     }
 
     /**
@@ -535,7 +543,7 @@ class TestSuite implements IteratorAggregate, Reorderable, Test
                 new TestMethod(
                     $className,
                     $methodName,
-                    $class->getFileName(),
+                    $method->getFileName(),
                     $method->getStartLine(),
                     Event\Code\TestDoxBuilder::fromClassNameAndMethodName(
                         $className,
@@ -636,6 +644,8 @@ class TestSuite implements IteratorAggregate, Reorderable, Test
                 $method,
             );
 
+            $t = null;
+
             try {
                 $missingRequirements = (new Requirements)->requirementsNotSatisfiedFor($this->name, $method);
 
@@ -683,6 +693,8 @@ class TestSuite implements IteratorAggregate, Reorderable, Test
                 }
 
                 $result = false;
+
+                break;
             }
         }
 
@@ -719,6 +731,8 @@ class TestSuite implements IteratorAggregate, Reorderable, Test
                 $method,
             );
 
+            $t = null;
+
             try {
                 call_user_func([$this->name, $method]);
             } catch (Throwable $t) {
@@ -745,6 +759,8 @@ class TestSuite implements IteratorAggregate, Reorderable, Test
                         Event\Code\ThrowableBuilder::from($t),
                     );
                 }
+
+                break;
             }
         }
 

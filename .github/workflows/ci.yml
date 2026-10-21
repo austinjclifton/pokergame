@@ -29,7 +29,7 @@ jobs:
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4'
+          php-version: '8.4.27'
           extensions: iconv, mbstring, pdo_mysql, pdo_sqlite
           coverage: none
 
@@ -39,9 +39,11 @@ jobs:
       - name: Install PHP dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
 
+      - name: Verify Composer platform requirements
+        run: composer check-platform-reqs --lock
+
       - name: Audit Composer dependencies
-        continue-on-error: true
-        run: composer audit --locked --no-dev
+        run: composer audit --locked
 
       - name: Validate PHP syntax
         working-directory: .

@@ -37,6 +37,16 @@ abstract readonly class Metadata
         return new AfterClass(self::METHOD_LEVEL, $priority);
     }
 
+    public static function allowMockObjectsWithoutExpectationsOnClass(): AllowMockObjectsWithoutExpectations
+    {
+        return new AllowMockObjectsWithoutExpectations(self::CLASS_LEVEL);
+    }
+
+    public static function allowMockObjectsWithoutExpectationsOnMethod(): AllowMockObjectsWithoutExpectations
+    {
+        return new AllowMockObjectsWithoutExpectations(self::METHOD_LEVEL);
+    }
+
     public static function backupGlobalsOnClass(bool $enabled): BackupGlobals
     {
         return new BackupGlobals(self::CLASS_LEVEL, $enabled);
@@ -294,7 +304,7 @@ abstract readonly class Metadata
     }
 
     /**
-     * @param class-string     $className
+     * @param non-empty-string $className
      * @param non-empty-string $methodName
      */
     public static function requiresMethodOnClass(string $className, string $methodName): RequiresMethod
@@ -303,7 +313,7 @@ abstract readonly class Metadata
     }
 
     /**
-     * @param class-string     $className
+     * @param non-empty-string $className
      * @param non-empty-string $methodName
      */
     public static function requiresMethodOnMethod(string $className, string $methodName): RequiresMethod
@@ -586,6 +596,14 @@ abstract readonly class Metadata
      * @phpstan-assert-if-true AfterClass $this
      */
     public function isAfterClass(): bool
+    {
+        return false;
+    }
+
+    /**
+     * @phpstan-assert-if-true AllowMockObjectsWithoutExpectations $this
+     */
+    public function isAllowMockObjectsWithoutExpectations(): bool
     {
         return false;
     }

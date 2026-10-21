@@ -2,14 +2,18 @@
 
 ## Prerequisites
 
-- PHP 8.3 or newer (PHP 8.4 is the CI runtime)
+- PHP 8.4.27 or newer within the PHP 8.4 release branch
 - Composer 2
 - MySQL 8
 - Node.js 22 and npm
-- PHP extensions: `iconv`, `mbstring`, `PDO`, `pdo_mysql`, and `pdo_sqlite`
+- Application PHP extensions: `filter`, `hash`, `json`, `mbstring`, `PDO`, and
+  `pdo_mysql`
+- Test/tooling PHP extensions: `dom`, `iconv`, `libxml`, `pdo_sqlite`, `xml`,
+  and `xmlwriter`
 
-The backend currently uses PHPUnit 12, which requires PHP 8.3 or newer. Phase 0
-does not change application dependency versions.
+The Composer platform constraint is `~8.4.27`, which admits patched PHP 8.4
+releases starting at 8.4.27 and excludes PHP 8.5. CI exercises the minimum
+supported version. The backend remains on PHPUnit 12.
 
 ## Install dependencies
 
@@ -90,5 +94,5 @@ npm run lint
 npm run build
 ```
 
-CI also syntax-checks every first-party PHP file. Composer auditing is recorded
-but temporarily non-blocking because dependency remediation belongs to Phase 1.
+CI also syntax-checks every first-party PHP file. Composer auditing includes
+development dependencies and is blocking.

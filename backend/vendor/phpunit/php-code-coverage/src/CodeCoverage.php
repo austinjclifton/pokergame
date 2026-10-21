@@ -39,7 +39,7 @@ use SebastianBergmann\CodeCoverage\Test\TestStatus\TestStatus;
 /**
  * Provides collection functionality for PHP code coverage information.
  *
- * @phpstan-type TestType array{size: string, status: string}
+ * @phpstan-type TestType array{size: string, status: string, time: float}
  * @phpstan-type TargetedLines array<non-empty-string, list<positive-int>>
  */
 final class CodeCoverage
@@ -189,11 +189,11 @@ final class CodeCoverage
         $this->cachedReport = null;
     }
 
-    public function stop(bool $append = true, ?TestStatus $status = null, null|false|TargetCollection $covers = null, ?TargetCollection $uses = null): RawCodeCoverageData
+    public function stop(bool $append = true, ?TestStatus $status = null, null|false|TargetCollection $covers = null, ?TargetCollection $uses = null, float $time = 0.0): RawCodeCoverageData
     {
         $data = $this->driver->stop();
 
-        $this->append($data, null, $append, $status, $covers, $uses);
+        $this->append($data, null, $append, $status, $covers, $uses, $time);
 
         $this->currentId    = null;
         $this->currentSize  = null;
@@ -207,7 +207,7 @@ final class CodeCoverage
      * @throws TestIdMissingException
      * @throws UnintentionallyCoveredCodeException
      */
-    public function append(RawCodeCoverageData $rawData, ?string $id = null, bool $append = true, ?TestStatus $status = null, null|false|TargetCollection $covers = null, ?TargetCollection $uses = null): void
+    public function append(RawCodeCoverageData $rawData, ?string $id = null, bool $append = true, ?TestStatus $status = null, null|false|TargetCollection $covers = null, ?TargetCollection $uses = null, float $time = 0.0): void
     {
         if ($id === null) {
             $id = $this->currentId;
@@ -256,13 +256,18 @@ final class CodeCoverage
         }
 
         $linesToBeCovered = false;
-        $linesToBeUsed    = [];
 
         if ($covers !== false) {
-            $linesToBeCovered = $this->targetMapper()->mapTargets($covers);
+            $linesToBeCovered = [];
+
+            if ($covers->isNotEmpty()) {
+                $linesToBeCovered = $this->targetMapper()->mapTargets($covers);
+            }
         }
 
-        if ($linesToBeCovered !== false) {
+        $linesToBeUsed = [];
+
+        if ($linesToBeCovered !== false && $linesToBeCovered !== [] && $uses->isNotEmpty()) {
             $linesToBeUsed = $this->targetMapper()->mapTargets($uses);
         }
 
@@ -280,6 +285,7 @@ final class CodeCoverage
         $this->tests[$id] = [
             'size'   => $size->asString(),
             'status' => $status->asString(),
+            'time'   => $time,
         ];
 
         $this->data->markCodeAsExecutedByTestCase($id, $rawData);
@@ -296,7 +302,13 @@ final class CodeCoverage
 
         $this->data->merge($that->data);
 
-        $this->tests = array_merge($this->tests, $that->getTests());
+        // The tests are added to the ones merged so far rather than merged
+        // with them into a new array: that would copy every test merged so
+        // far on each merge, which made merging the code coverage of many
+        // processes, one after another, quadratic.
+        foreach ($that->getTests() as $id => $test) {
+            $this->tests[$id] = $test;
+        }
 
         $this->cachedReport = null;
     }
@@ -402,7 +414,27 @@ final class CodeCoverage
 
     public function validate(TargetCollection $targets): ValidationResult
     {
+        if ($targets->isEmpty()) {
+            return ValidationResult::success();
+        }
+
         return (new TargetCollectionValidator)->validate($this->targetMapper(), $targets);
+    }
+
+    /**
+     * @internal
+     */
+    public function driverIsPcov(): bool
+    {
+        return isset($this->driver) && $this->driver->isPcov();
+    }
+
+    /**
+     * @internal
+     */
+    public function driverIsXdebug(): bool
+    {
+        return isset($this->driver) && $this->driver->isXdebug();
     }
 
     /**

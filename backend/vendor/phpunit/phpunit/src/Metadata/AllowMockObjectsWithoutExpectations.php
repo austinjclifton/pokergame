@@ -7,25 +7,17 @@
  * For the full copyright and license information, please view the LICENSE
  * file that was distributed with this source code.
  */
-namespace PHPUnit\Event\Code\IssueTrigger;
+namespace PHPUnit\Metadata;
 
 /**
  * @immutable
  *
  * @no-named-arguments Parameter names are not covered by the backward compatibility promise for PHPUnit
  */
-final class DirectTrigger extends IssueTrigger
+final readonly class AllowMockObjectsWithoutExpectations extends Metadata
 {
-    /**
-     * Your own code triggers an issue in third-party code.
-     */
-    public function isDirect(): true
+    public function isAllowMockObjectsWithoutExpectations(): true
     {
         return true;
-    }
-
-    public function asString(): string
-    {
-        return 'issue triggered by first-party code calling into third-party code';
     }
 }

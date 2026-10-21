@@ -28,6 +28,7 @@ use function is_scalar;
 use function method_exists;
 use function preg_quote;
 use function preg_replace;
+use function preg_replace_callback_array;
 use function rtrim;
 use function sprintf;
 use function str_contains;
@@ -36,9 +37,9 @@ use function str_replace;
 use function str_starts_with;
 use function strlen;
 use function strtolower;
-use function strtoupper;
 use function substr;
 use function trim;
+use function ucfirst;
 use PHPUnit\Event\Code\TestMethodBuilder;
 use PHPUnit\Event\Facade as EventFacade;
 use PHPUnit\Framework\TestCase;
@@ -48,6 +49,7 @@ use PHPUnit\Metadata\TestDoxFormatter;
 use PHPUnit\Util\Color;
 use PHPUnit\Util\Exporter;
 use PHPUnit\Util\Filter;
+use PHPUnit\Util\Sanitizer;
 use ReflectionEnum;
 use ReflectionMethod;
 use ReflectionObject;
@@ -88,7 +90,7 @@ final class NamePrettifier
 
                 assert($classLevelTestDox instanceof TestDox);
 
-                return $classLevelTestDox->text();
+                return Sanitizer::sanitizeControlCharacters($classLevelTestDox->text());
             }
         }
 
@@ -97,12 +99,6 @@ final class NamePrettifier
 
         if (str_ends_with($className, 'Test')) {
             $className = substr($className, 0, strlen($className) - strlen('Test'));
-        }
-
-        if (str_starts_with($className, 'Tests')) {
-            $className = substr($className, strlen('Tests'));
-        } elseif (str_starts_with($className, 'Test')) {
-            $className = substr($className, strlen('Test'));
         }
 
         if ($className === '') {
@@ -150,7 +146,7 @@ final class NamePrettifier
             return '';
         }
 
-        $name[0] = strtoupper($name[0]);
+        $name = ucfirst($name);
 
         $noUnderscore = str_replace('_', ' ', $name);
 
@@ -158,30 +154,13 @@ final class NamePrettifier
             return trim($noUnderscore);
         }
 
-        $wasNumeric = false;
-
-        $buffer = '';
-
-        $len = strlen($name);
-
-        for ($i = 0; $i < $len; $i++) {
-            if ($i > 0 && $name[$i] >= 'A' && $name[$i] <= 'Z') {
-                $buffer .= ' ' . strtolower($name[$i]);
-            } else {
-                $isNumeric = $name[$i] >= '0' && $name[$i] <= '9';
-
-                if (!$wasNumeric && $isNumeric) {
-                    $buffer .= ' ';
-                    $wasNumeric = true;
-                }
-
-                if ($wasNumeric && !$isNumeric) {
-                    $wasNumeric = false;
-                }
-
-                $buffer .= $name[$i];
-            }
-        }
+        $buffer = preg_replace_callback_array(
+            [
+                '/(?!^)([A-Z])/' => static fn (array $matches) => ' ' . strtolower($matches[1]),
+                '/(\d+)/'        => static fn (array $matches) => ' ' . $matches[1],
+            ],
+            $name,
+        );
 
         return trim($buffer);
     }
@@ -242,7 +221,12 @@ final class NamePrettifier
             return Color::dim(' with data set ') . Color::colorize('fg-cyan', (string) $test->dataName());
         }
 
-        return Color::dim(' with ') . Color::colorize('fg-cyan', Color::visualizeWhitespace($test->dataName()));
+        return Color::dim(' with ') . Color::colorize(
+            'fg-cyan',
+            Color::visualizeWhitespace(
+                Sanitizer::sanitizeControlCharacters($test->dataName()),
+            ),
+        );
     }
 
     /**
@@ -256,17 +240,29 @@ final class NamePrettifier
         $reflector = new ReflectionMethod($test::class, $test->name());
 
         $providedData       = [];
-        $providedDataValues = array_values($test->providedData());
+        $providedDataValues = $test->providedData();
         $i                  = 0;
 
-        $providedData['$_dataName'] = $test->dataName();
+        $dataName = $test->dataName();
+
+        if (is_int($dataName)) {
+            $providedData['$_dataName'] = $dataName;
+        } else {
+            $providedData['$_dataName'] = Sanitizer::sanitizeControlCharacters($dataName);
+        }
 
         foreach ($reflector->getParameters() as $parameter) {
-            if (!array_key_exists($i, $providedDataValues) && $parameter->isDefaultValueAvailable()) {
-                $providedDataValues[$i] = $parameter->getDefaultValue();
+            if (array_key_exists($parameter->getName(), $providedDataValues)) {
+                $value = $providedDataValues[$parameter->getName()];
+            } elseif (array_key_exists($i, $providedDataValues)) {
+                $value = $providedDataValues[$i];
+            } elseif ($parameter->isDefaultValueAvailable()) {
+                $value = $parameter->getDefaultValue();
+            } else {
+                $value = null;
             }
 
-            $value = $providedDataValues[$i++] ?? null;
+            $i++;
 
             if (is_object($value)) {
                 $value = $this->objectToString($value);
@@ -290,6 +286,8 @@ final class NamePrettifier
                 } else {
                     $value = "''";
                 }
+            } else {
+                $value = Sanitizer::sanitizeControlCharacters($value);
             }
 
             $providedData['$' . $parameter->getName()] = str_replace('$', '\\$', $value);
@@ -336,7 +334,7 @@ final class NamePrettifier
     {
         $placeholdersUsed = false;
 
-        $result = $testDox->text();
+        $result = Sanitizer::sanitizeControlCharacters($testDox->text());
 
         if (str_contains($result, '$')) {
             $annotation   = $result;
@@ -419,7 +417,12 @@ final class NamePrettifier
         }
 
         try {
-            return [$reflector->invokeArgs(null, array_values($test->providedData())), true];
+            return [
+                Sanitizer::sanitizeControlCharacters(
+                    $reflector->invokeArgs(null, array_values($test->providedData())),
+                ),
+                true,
+            ];
         } catch (Throwable $t) {
             EventFacade::emitter()->testTriggeredPhpunitError(
                 TestMethodBuilder::fromTestCase($test, false),
