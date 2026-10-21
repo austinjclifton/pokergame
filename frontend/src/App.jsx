@@ -45,7 +45,7 @@ export default function App() {
         } else {
           setUser(null);
         }        
-      } catch (err) {
+      } catch {
         setUser(null);
       } finally {
         setChecking(false);

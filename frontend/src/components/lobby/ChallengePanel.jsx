@@ -7,7 +7,6 @@ import React from "react";
  */
 export default function ChallengePanel({
   challenges,
-  user,
   pending,
   setPending,
   socketRef, // Add socketRef prop to send WebSocket messages

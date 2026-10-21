@@ -17,8 +17,6 @@ export default function Seat({
   isMe = false,
   showBacks = false,
   handDescription = null,
-  onFlipCards = null,
-  revealCards = false,
 }) {
   const parsedCards = cards.map(parseCard).filter(Boolean);
 

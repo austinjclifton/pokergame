@@ -22,6 +22,22 @@ final class WebSocketJsonTest extends TestCase
         $this->assertStringContainsString('Hello 🎮', $json);
     }
 
+    public function testCurrentMessageEnvelopeIsEncodedWithoutRenamingOrInjectingFields(): void
+    {
+        $payload = [
+            'type' => 'STATE_SYNC',
+            'reason' => 'connect',
+            'game_id' => 42,
+            'version' => 7,
+            'state' => ['phase' => 'flop', 'pot' => 120],
+        ];
+
+        $decoded = json_decode(WebSocketJson::encode($payload), true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertSame($payload, $decoded);
+        $this->assertSame(['type', 'reason', 'game_id', 'version', 'state'], array_keys($decoded));
+    }
+
     public function testSendWritesEncodedPayload(): void
     {
         $conn = new class implements ConnectionInterface {

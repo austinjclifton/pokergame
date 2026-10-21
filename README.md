@@ -4,6 +4,9 @@ A 1v1 poker simulation game built with application security as its main objectiv
 
 ## Quick Start
 
+Prerequisites and complete testing instructions are documented in
+[`docs/testing.md`](docs/testing.md).
+
 **Frontend:**
 ```bash
 cd frontend
@@ -22,20 +25,42 @@ php backend/ws/server.php
 
 ## Local Development
 
-The database configuration defaults to the RIT Apache VM settings (`root`/`student`). For local development, you can override these with environment variables:
+For application development, provide all database settings together. Partial
+configuration is rejected rather than mixed with defaults:
 
 ```bash
-# Example: Local MySQL with root user and no password
-DB_USER=root DB_PASS= php backend/ws/server.php
-
-# Or set them in your shell session
+export DB_HOST=127.0.0.1
+export DB_PORT=3306
+export DB_NAME=pokergame
 export DB_USER=root
 export DB_PASS=
 php backend/ws/server.php
 ```
 
 Available environment variables:
-- `DB_HOST` (default: `127.0.0.1`)
-- `DB_NAME` (default: `pokergame`)
-- `DB_USER` (default: `root`)
-- `DB_PASS` (default: `student`)
+- `DB_HOST`
+- `DB_PORT` (defaults to `3306`)
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASS` (may be explicitly empty for local development)
+
+## Tests
+
+Pure unit tests do not connect to MySQL:
+
+```bash
+cd backend
+vendor/bin/phpunit --configuration phpunit.xml
+```
+
+Integration tests require explicit `TEST_DB_*` settings and a database whose
+name ends in `_test`:
+
+```bash
+cd backend
+vendor/bin/phpunit --configuration phpunit.integration.xml
+```
+
+The WebSocket baseline and persisted state format are recorded in
+[`docs/websocket-protocol.md`](docs/websocket-protocol.md) and
+[`docs/game-snapshot-format.md`](docs/game-snapshot-format.md).

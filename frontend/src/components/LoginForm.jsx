@@ -53,7 +53,7 @@ export default function LoginForm({ onLogin }) {
       // Notify parent (LoginPage)
       onLogin?.(data.user);
 
-    } catch (err) {
+    } catch {
       // Normalized login failure message — never reveals server internals
       setError("Invalid username or password.");
     } finally {

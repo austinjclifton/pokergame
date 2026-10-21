@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: PHP checks and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TEST_DB_HOST: 127.0.0.1
+      TEST_DB_PORT: '3306'
+      TEST_DB_NAME: pokergame_ci_test
+      TEST_DB_USER: pokergame_test
+      TEST_DB_PASS: test-only-password
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: iconv, mbstring, pdo_mysql, pdo_sqlite
+          coverage: none
+
+      - name: Validate Composer files
+        run: composer validate --no-check-publish
+
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Audit Composer dependencies
+        continue-on-error: true
+        run: composer audit --locked --no-dev
+
+      - name: Validate PHP syntax
+        working-directory: .
+        run: >-
+          find backend
+          -path backend/vendor -prune -o
+          -path backend/public/assets -prune -o
+          -type f -name '*.php' -print0
+          | xargs -0 -n1 php -l
+
+      - name: Run unit tests without MySQL
+        run: vendor/bin/phpunit --configuration phpunit.xml
+
+      - name: Start MySQL
+        run: |
+          sudo systemctl start mysql.service
+          for attempt in {1..30}; do
+            if sudo mysqladmin ping --silent; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "MySQL did not become ready within 30 seconds" >&2
+          exit 1
+
+      - name: Create isolated integration-test database
+        working-directory: .
+        run: |
+          case "$TEST_DB_NAME" in
+            *_test) ;;
+            *) echo "Refusing non-test database: $TEST_DB_NAME" >&2; exit 1 ;;
+          esac
+          sudo mysql --execute="CREATE DATABASE pokergame_ci_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+          sudo mysql --execute="CREATE USER 'pokergame_test'@'%' IDENTIFIED BY 'test-only-password';"
+          sudo mysql --execute="GRANT ALL PRIVILEGES ON pokergame_ci_test.* TO 'pokergame_test'@'%';"
+          mysql --protocol=TCP --host="$TEST_DB_HOST" --port="$TEST_DB_PORT" --user="$TEST_DB_USER" --password="$TEST_DB_PASS" "$TEST_DB_NAME" < backend/app/db/poker_schema.sql
+
+      - name: Verify integration-test database isolation
+        working-directory: .
+        run: |
+          mysql --protocol=TCP --host="$TEST_DB_HOST" --port="$TEST_DB_PORT" --user="$TEST_DB_USER" --password="$TEST_DB_PASS" "$TEST_DB_NAME" --execute="SELECT DATABASE();"
+          if mysql --protocol=TCP --host="$TEST_DB_HOST" --port="$TEST_DB_PORT" --user="$TEST_DB_USER" --password="$TEST_DB_PASS" mysql --execute="SELECT 1;"; then
+            echo "Integration-test user unexpectedly accessed the mysql schema" >&2
+            exit 1
+          fi
+
+      - name: Run integration tests against isolated database
+        run: vendor/bin/phpunit --configuration phpunit.integration.xml
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Build production frontend
+        run: npm run build

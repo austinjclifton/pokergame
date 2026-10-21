@@ -48,7 +48,7 @@ export default function LobbyPage({ user, onLogout }) {
       if (data.ok) {
         setChallenges(data.challenges || []);
       }
-    } catch (e) {
+    } catch {
       // Failed to fetch challenges - will retry on next update
     }
   }, []);
@@ -119,7 +119,7 @@ export default function LobbyPage({ user, onLogout }) {
     },
     onMessage: (msg) => {
       switch (msg.type) {
-        case "history":
+        case "history": {
           // Filter history messages to only show last 12 hours
           const historyMsgs = (msg.messages || []).map((m) => ({
             from: m.from,
@@ -130,7 +130,8 @@ export default function LobbyPage({ user, onLogout }) {
           }));
           setMessages(filterRecentMessages(historyMsgs));
           break;
-        case "chat":
+        }
+        case "chat": {
           const newMsg = {
             from: msg.system ? "System" : msg.from,
             msg: msg.msg,
@@ -143,6 +144,7 @@ export default function LobbyPage({ user, onLogout }) {
             return filterRecentMessages(updated);
           });
           break;
+        }
           case "presence": {
             const id = msg.user?.id;
             const name = msg.user?.username;

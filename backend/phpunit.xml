@@ -6,10 +6,9 @@
          stopOnFailure="false"
          displayDetailsOnPhpunitDeprecations="true">
     <testsuites>
-        <testsuite name="PokerGame Test Suite">
+        <testsuite name="PokerGame Unit Tests">
             <directory>tests/unit</directory>
-            <directory>tests/integration</directory>
-            <exclude>tests/integration/db/BaseDBIntegrationTest.php</exclude>
+            <exclude>tests/unit/AuditServiceTest.php</exclude>
         </testsuite>
     </testsuites>
     

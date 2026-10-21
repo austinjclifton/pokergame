@@ -45,7 +45,7 @@ export default function AuthGate() {
 
         // No valid session
         setLoggedIn(false);
-      } catch (err) {
+      } catch {
         setLoggedIn(false);
       } finally {
         setChecked(true); // always mark completion

@@ -45,7 +45,7 @@ export default function useLobbySocket({ onMessage, onPlayers, onConnected }) {
             const msg = JSON.parse(event.data);
             if (msg.type === "online_users") onPlayers?.(msg.users || []);
             else onMessage?.(msg);
-          } catch (e) {
+          } catch {
             // Invalid message format - silently ignore
           }
         };
@@ -66,7 +66,7 @@ export default function useLobbySocket({ onMessage, onPlayers, onConnected }) {
           if (ws.readyState === WebSocket.OPEN)
             ws.send(JSON.stringify({ type: "ping" }));
         }, 30000);
-      } catch (e) {
+      } catch {
         stateRef.current.isConnecting = false;
         // Connection will retry automatically
       }

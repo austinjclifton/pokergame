@@ -199,6 +199,9 @@ function buildSeatsFromFinalHand(finalHand, prevSeats = []) {
  *   1. lastHandSummaryRef (server hand_end summary: board, players, winners, reason)
  *   2. msg.finalHand or msg.board or stateRef.current.community as fallback board
  */
+// Retained as part of the Phase 0 behavior baseline; later cleanup can decide
+// whether this currently unused compatibility helper should be removed.
+// eslint-disable-next-line no-unused-vars
 function buildNonForfeitFinalHand({
   msg,
   lastHandSummary,

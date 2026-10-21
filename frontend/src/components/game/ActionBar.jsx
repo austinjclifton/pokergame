@@ -82,9 +82,6 @@ export default function ActionBar({
   const canRaise = currentBet > 0 && legalActions.includes("raise");
   const canFold = legalActions.includes("fold");
 
-  // Always allowed: match-level action
-  const canForfeit = true;
-
   // ---------------------------------------------------------------------------
   // Slider / amount constraints
   // ---------------------------------------------------------------------------
