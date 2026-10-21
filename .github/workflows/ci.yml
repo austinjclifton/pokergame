@@ -59,7 +59,7 @@ jobs:
         run: |
           sudo systemctl start mysql.service
           for attempt in {1..30}; do
-            if sudo mysqladmin ping --silent; then
+            if mysqladmin --user=root --password=root ping --silent; then
               exit 0
             fi
             sleep 1
@@ -74,9 +74,9 @@ jobs:
             *_test) ;;
             *) echo "Refusing non-test database: $TEST_DB_NAME" >&2; exit 1 ;;
           esac
-          sudo mysql --execute="CREATE DATABASE pokergame_ci_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-          sudo mysql --execute="CREATE USER 'pokergame_test'@'%' IDENTIFIED BY 'test-only-password';"
-          sudo mysql --execute="GRANT ALL PRIVILEGES ON pokergame_ci_test.* TO 'pokergame_test'@'%';"
+          mysql --user=root --password=root --execute="CREATE DATABASE pokergame_ci_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+          mysql --user=root --password=root --execute="CREATE USER 'pokergame_test'@'%' IDENTIFIED BY 'test-only-password';"
+          mysql --user=root --password=root --execute="GRANT ALL PRIVILEGES ON pokergame_ci_test.* TO 'pokergame_test'@'%';"
           mysql --protocol=TCP --host="$TEST_DB_HOST" --port="$TEST_DB_PORT" --user="$TEST_DB_USER" --password="$TEST_DB_PASS" "$TEST_DB_NAME" < backend/app/db/poker_schema.sql
 
       - name: Verify integration-test database isolation
