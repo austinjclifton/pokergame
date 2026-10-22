@@ -90,7 +90,7 @@ composer validate --no-check-publish
 composer audit --locked
 
 cd ../frontend
-npm audit --audit-level=low
+npm audit --package-lock-only --audit-level=low
 npm run lint
 npm run build
 ```
