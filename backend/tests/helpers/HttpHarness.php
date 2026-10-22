@@ -319,7 +319,7 @@ PHP;
     }
     
     // Execute and capture output (redirect stderr to /dev/null to suppress warnings)
-    $cmd = $envString . 'php ' . escapeshellarg($tempScript) . ' 2>/dev/null';
+    $cmd = $envString . escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($tempScript) . ' 2>/dev/null';
     $output = shell_exec($cmd);
     @unlink($tempScript);
     

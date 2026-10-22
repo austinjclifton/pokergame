@@ -145,6 +145,28 @@ final class APIEndpointHttpTest extends TestCase
         $this->assertArrayHasKey('message', $data, 'Should have error message');
     }
 
+    public function testEndpointHarnessUsesTheCurrentPhpBinaryWithoutPathLookup(): void
+    {
+        $originalPath = getenv('PATH');
+
+        try {
+            putenv('PATH=');
+            $res = run_endpoint(
+                __DIR__ . '/../../../public/api/me.php',
+                ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => '127.0.0.1']
+            );
+        } finally {
+            if ($originalPath === false) {
+                putenv('PATH');
+            } else {
+                putenv('PATH=' . $originalPath);
+            }
+        }
+
+        $this->assertSame(401, $res['status']);
+        $this->assertFalse(json_decode($res['body'], true)['ok'] ?? true);
+    }
+
     public function testMeReturns200WithValidSession(): void
     {
         $userId = $this->createTestUser('http_test_user');

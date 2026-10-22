@@ -8,26 +8,33 @@ required.
 
 - PHP 8.4.27 or newer within the PHP 8.4 release branch
 - Composer 2
-- MySQL 8
+- MySQL 8 (the Phase 1E manual regression was also verified on MySQL 9.5)
 - Node.js 22.12 or newer on the Node.js 22 or 24 release line
 - npm
 
-With Homebrew, install the equivalent current formulae for PHP 8.4, Composer,
-MySQL 8, and Node 22 or 24. Confirm the selected binaries before continuing:
+With Homebrew, use the versioned, keg-only PHP formula so installing PHP 8.4
+does not relink or replace another PHP installation:
 
 ```bash
-php --version
-composer --version
+HOMEBREW_NO_AUTO_UPDATE=1 brew install php@8.4
+POKER_PHP="$(brew --prefix php@8.4)/bin/php"
+POKER_COMPOSER="$(command -v composer)"
+"$POKER_PHP" --version
+"$POKER_PHP" "$POKER_COMPOSER" --version
 mysql --version
 node --version
 npm --version
 ```
 
+Keep using `POKER_PHP` explicitly in each terminal. Do not run `brew link
+php@8.4` merely for this project. Composer can be run on the selected PHP
+binary with `"$POKER_PHP" "$POKER_COMPOSER"`.
+
 Install the locked application dependencies:
 
 ```bash
 cd backend
-composer install
+"$POKER_PHP" "$POKER_COMPOSER" install
 cd ../frontend
 npm ci
 cd ..
@@ -35,10 +42,15 @@ cd ..
 
 ## Application database
 
-Start MySQL and create a development-only schema and user. Replace the example
-password with a local password and use the same value in `.env`.
+Inspect MySQL before changing it, then start it only if it is not already
+running. Create a disposable manual-regression schema and a schema-scoped
+account. Replace the example password with a local password and use the same
+value in `.env`.
 
 ```bash
+lsof -nP -iTCP:3306 -sTCP:LISTEN
+brew services list
+# Run this only when MySQL is not already running:
 brew services start mysql
 mysql -u root -p
 ```
@@ -46,21 +58,24 @@ mysql -u root -p
 Run the following statements in the MySQL prompt:
 
 ```sql
-CREATE DATABASE pokergame
+CREATE DATABASE pokergame_manual_test
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'pokergame_app'@'localhost'
+CREATE USER 'pokergame_local'@'localhost'
   IDENTIFIED BY 'replace-with-a-local-password';
-GRANT ALL PRIVILEGES ON pokergame.* TO 'pokergame_app'@'localhost';
+GRANT ALL PRIVILEGES ON pokergame_manual_test.*
+  TO 'pokergame_local'@'localhost';
 ```
 
 Exit the prompt and initialize the schema without dropping any database:
 
 ```bash
-mysql -u pokergame_app -p pokergame < backend/app/db/poker_schema.sql
+mysql -u pokergame_local -p pokergame_manual_test \
+  < backend/app/db/poker_schema.sql
 ```
 
-The application database must never be reused for automated integration tests.
-The isolated `_test` setup remains documented in
+Although the disposable manual schema ends in `_test`, it must never be passed
+to PHPUnit as `TEST_DB_NAME`. Automated integration tests perform destructive
+cleanup and require their own isolated schema. That setup remains documented in
 [`testing.md`](testing.md#integration-test-database).
 
 ## Environment configuration
@@ -115,14 +130,16 @@ Terminal 1 — HTTP API:
 
 ```bash
 set -a; source .env; set +a
-php -S localhost:8000 -t backend/public
+POKER_PHP="$(brew --prefix php@8.4)/bin/php"
+"$POKER_PHP" -S localhost:8000 -t backend/public
 ```
 
 Terminal 2 — WebSocket server:
 
 ```bash
 set -a; source .env; set +a
-php backend/ws/server.php
+POKER_PHP="$(brew --prefix php@8.4)/bin/php"
+"$POKER_PHP" backend/ws/server.php
 ```
 
 Terminal 3 — React frontend:
@@ -147,10 +164,11 @@ Use two independent browser profiles or one normal and one private window:
 6. Finish a game and confirm the final state/summary appears for both users.
 7. Log both users out and confirm protected pages return to the login screen.
 
-Delete disposable data only through deliberate SQL against the `pokergame`
-development schema. The repository contains no application-database reset
-script because automated destructive cleanup is reserved for guarded `_test`
-databases.
+Delete disposable data only through deliberate SQL against
+`pokergame_manual_test`. Before any cleanup, confirm the selected database with
+`SELECT DATABASE()`. The repository contains no application-database reset
+script because automated destructive cleanup is reserved for the separately
+configured integration-test database.
 
 ## Stop the application
 
@@ -159,6 +177,15 @@ needed by other local projects:
 
 ```bash
 brew services stop mysql
+```
+
+To deliberately remove the disposable manual environment later, first verify
+the exact schema and account names, then run these statements as a MySQL
+administrator. Do not generalize or parameterize these targets:
+
+```sql
+DROP DATABASE pokergame_manual_test;
+DROP USER 'pokergame_local'@'localhost';
 ```
 
 ## Common failures
@@ -184,9 +211,11 @@ database ending in `_test`:
 
 ```bash
 cd backend
-vendor/bin/phpunit --configuration phpunit.xml --display-all-issues
-vendor/bin/phpunit --configuration phpunit.integration.xml --display-all-issues
-composer audit --locked
+POKER_PHP="$(brew --prefix php@8.4)/bin/php"
+POKER_COMPOSER="$(command -v composer)"
+"$POKER_PHP" vendor/bin/phpunit --configuration phpunit.xml --display-all-issues
+"$POKER_PHP" vendor/bin/phpunit --configuration phpunit.integration.xml --display-all-issues
+"$POKER_PHP" "$POKER_COMPOSER" audit --locked
 
 cd ../frontend
 npm audit --package-lock-only --audit-level=low
