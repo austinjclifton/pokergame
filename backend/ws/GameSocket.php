@@ -720,7 +720,7 @@ final class GameSocket implements MessageComponentInterface
      * HARDENED: Only touches GameService, never modifies connection tracking arrays.
      * This ensures other players' connections remain unaffected.
      */
-    private function rebuildFromDatabase(int $tableId, int $gameId, GameService $gameService): void
+    private function rebuildFromDatabase(int $tableId, int $gameId, GameService $gameService): bool
     {
         // Abort if players appeared during rebuild
         $activeConnectionCount = count($this->tableConnections[$tableId] ?? []);
@@ -730,7 +730,7 @@ final class GameSocket implements MessageComponentInterface
     
         if ($activeConnectionCount > 0 || $activeUserCount > 0) {
             WebSocketLog::debug('GameSocket', "Aborting rebuild for table #{$tableId} because connections appeared");
-            return;
+            return false;
         }
     
         $this->rebuildingTables[$tableId] = true;
@@ -752,11 +752,14 @@ final class GameSocket implements MessageComponentInterface
 
                 $gameService->restoreSnapshot($state, (int)($snapshot['version'] ?? 0));
                 WebSocketLog::debug('GameSocket', "Snapshot restored for table #{$tableId}");
+                return true;
             } else {
                 WebSocketLog::debug('GameSocket', "No snapshot found for game #{$gameId}; skipping rebuild");
+                return false;
             }
         } catch (\Throwable $e) {
             WebSocketLog::error('GameSocket', 'Rebuild failed: ' . $e->getMessage());
+            throw $e;
         } finally {
             unset($this->rebuildingTables[$tableId]);
         }
@@ -1338,6 +1341,13 @@ final class GameSocket implements MessageComponentInterface
         $service->setGameId($dbGameId);
         $this->gameServices[$tableId] = $service;
         $this->tableIdToGameId[$tableId] = $dbGameId;
+
+        // Restore persisted state before the first reconnecting socket is
+        // registered. Otherwise the active connection prevents recovery and
+        // ensureHandBootstrapped() replaces the active hand with a new one.
+        if ($this->rebuildFromDatabase($tableId, $dbGameId, $service)) {
+            $this->tableBootstrapped[$tableId] = true;
+        }
 
         return $dbGameId;
     }

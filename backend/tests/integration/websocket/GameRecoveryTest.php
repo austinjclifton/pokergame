@@ -274,4 +274,75 @@ final class GameRecoveryTest extends TestCase
         $this->assertSame($stateDiff['state']['pot'], $snapshot['state']['pot']);
         $this->assertSame($stateDiff['state']['currentBet'], $snapshot['state']['currentBet']);
     }
+
+    public function testFreshSocketRestoresPersistedActiveHandForBothPlayers(): void
+    {
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
+        $this->openAuthenticatedConnection($conn1);
+        $this->openAuthenticatedConnection($conn2);
+
+        for ($actionCount = 0; $actionCount < 4; $actionCount++) {
+            $persisted = db_get_latest_snapshot($this->pdo, $this->gameId);
+            $this->assertNotNull($persisted);
+            if (($persisted['state']['phase'] ?? null) !== 'preflop') {
+                break;
+            }
+
+            [$actingConn, $private] = $this->actingConnection($conn1, $conn2);
+            $payload = $this->validActionPayload($actingConn, $private);
+            $payload['game_version'] = (int)$persisted['version'];
+            $this->gameSocket->onMessage($actingConn, json_encode($payload, JSON_THROW_ON_ERROR));
+        }
+
+        $persistedBeforeRestart = db_get_latest_snapshot($this->pdo, $this->gameId);
+        $this->assertNotNull($persistedBeforeRestart);
+        $this->assertSame('flop', $persistedBeforeRestart['state']['phase']);
+        $this->assertCount(3, $persistedBeforeRestart['state']['board']);
+
+        // Simulate a process restart: the replacement socket has no in-memory
+        // GameService or connection state and can recover only from MySQL.
+        $this->gameSocket = new GameSocket($this->pdo);
+        $reconnected1 = $this->createConnection(101, $this->userId1);
+        $reconnected2 = $this->createConnection(102, $this->userId2);
+        $this->openAuthenticatedConnection($reconnected1);
+        $this->openAuthenticatedConnection($reconnected2);
+
+        $sync1 = $this->firstMessageByType($reconnected1, 'STATE_SYNC');
+        $sync2 = $this->firstMessageByType($reconnected2, 'STATE_SYNC');
+        $private1 = $this->firstMessageByType($reconnected1, 'STATE_PRIVATE');
+        $private2 = $this->firstMessageByType($reconnected2, 'STATE_PRIVATE');
+
+        $this->assertNotNull($sync1);
+        $this->assertNotNull($sync2);
+        $this->assertNotNull($private1);
+        $this->assertNotNull($private2);
+        $this->assertSame($persistedBeforeRestart['version'], $sync1['version']);
+        $this->assertSame($persistedBeforeRestart['version'], $sync2['version']);
+
+        foreach ([$sync1, $sync2] as $sync) {
+            foreach (['phase', 'board', 'pot', 'currentBet', 'actionSeat', 'dealerSeat', 'smallBlindSeat', 'bigBlindSeat'] as $field) {
+                $this->assertSame($persistedBeforeRestart['state'][$field], $sync['state'][$field], $field);
+            }
+
+            foreach ([1, 2] as $seat) {
+                foreach (['stack', 'bet', 'folded', 'allIn'] as $field) {
+                    $this->assertSame(
+                        $persistedBeforeRestart['state']['players'][$seat][$field],
+                        $sync['state']['players'][$seat][$field],
+                        "seat {$seat} {$field}",
+                    );
+                }
+                $this->assertArrayNotHasKey('cards', $sync['state']['players'][$seat]);
+            }
+        }
+
+        $this->assertSame($persistedBeforeRestart['state']['players'][1]['cards'], $private1['state']['myCards']);
+        $this->assertSame($persistedBeforeRestart['state']['players'][2]['cards'], $private2['state']['myCards']);
+
+        $persistedAfterRestart = db_get_latest_snapshot($this->pdo, $this->gameId);
+        $this->assertSame($persistedBeforeRestart['version'], $persistedAfterRestart['version']);
+        $this->assertSame($persistedBeforeRestart['state']['handIndex'], $persistedAfterRestart['state']['handIndex']);
+        $this->assertSame($persistedBeforeRestart['state'], $persistedAfterRestart['state']);
+    }
 }
