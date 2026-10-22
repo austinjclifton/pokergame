@@ -100,6 +100,8 @@ The PHP configuration variables are:
 | --- | --- |
 | `APP_ENV` | Use `development` locally and `production` when deployed. |
 | `APP_ORIGIN` | Exact browser origin allowed to make credentialed API requests. |
+| `WS_ALLOWED_ORIGINS` | Comma-separated exact browser origins accepted during WebSocket upgrades. |
+| `TRUSTED_PROXIES` | Comma-separated proxy IP addresses allowed to supply forwarded client/protocol headers; empty locally. |
 | `DB_HOST`, `DB_PORT` | MySQL endpoint. |
 | `DB_NAME`, `DB_USER`, `DB_PASS` | Explicit application schema credentials. |
 | `WS_HOST`, `WS_PORT` | Ratchet bind address and port. |
@@ -108,6 +110,22 @@ The PHP configuration variables are:
 All five `DB_*` variables are required. There are no database credential
 fallbacks. `WS_HOST` defaults to the loopback interface; a future deployment
 must explicitly use a public or private bind address when appropriate.
+
+When updating an existing Phase 1 database, back it up and run the guarded
+Phase 2 migration once with the exact configured database name:
+
+```bash
+set -a; source .env; set +a
+POKER_PHP="$(brew --prefix php@8.4)/bin/php"
+"$POKER_PHP" backend/app/db/migrate_phase2_auth.php \
+  --confirm-database="$DB_NAME" \
+  --confirm=phase-2-auth-security
+```
+
+The migration revokes legacy sessions and nonces, replaces raw authentication
+tokens with hashes, and adds explicit administrator and persistent throttle
+state. Users must log in again afterward. A fresh database should use
+`poker_schema.sql` and does not need the migration.
 
 Vite development defaults to `http://localhost:8000` for HTTP APIs and
 `ws://localhost:8080` for WebSockets. Override them in an ignored
@@ -194,15 +212,16 @@ DROP USER 'pokergame_local'@'localhost';
   terminal and ensure every `DB_*` key is present.
 - Browser CORS rejection: use exactly `http://localhost:5173` or update
   `APP_ORIGIN` to the browser's actual origin, then restart the HTTP server.
-- WebSocket handshake rejection: keep the browser hostname and `WS_APP_HOST`
-  aligned; the documented local value is `localhost`.
+- WebSocket handshake rejection: keep the browser hostname, `WS_APP_HOST`, and
+  exact `WS_ALLOWED_ORIGINS` entries aligned; the documented local origin is
+  `http://localhost:5173`.
 - Database access denied: verify the dedicated user, password, and grants; do
   not fall back to the MySQL root account.
 - Port already in use: stop the existing process or explicitly change the
   corresponding server and frontend endpoint variables together.
 - Cookies work over HTTP locally but not after deployment: terminate HTTPS
-  correctly and ensure PHP receives the HTTPS request state so cookies retain
-  the Secure attribute.
+  correctly, configure the immediate proxy address in `TRUSTED_PROXIES`, and
+  forward `X-Forwarded-Proto: https` so cookies retain the Secure attribute.
 
 ## Automated checks
 

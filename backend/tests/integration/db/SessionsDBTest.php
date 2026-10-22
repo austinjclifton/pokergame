@@ -217,7 +217,7 @@ final class SessionsDBTest extends BaseDBIntegrationTest
         $this->assertNotNull($session['revoked_at'], 'revoked_at should be set after revoke');
         
         // Verify revoked_at is recent (within last minute)
-        $this->assertRecentTimestamp('sessions', 'revoked_at', $sessionId);
+        $this->assertRecentTimestamp('sessions', 'revoked_at', $sessionId, 'id', 60, '', true);
     }
 
     /**

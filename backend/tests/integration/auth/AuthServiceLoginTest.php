@@ -553,11 +553,15 @@ final class AuthServiceLoginTest extends TestCase
         $this->assertNotSame($attackerSessionId, $newSessionId, 
             'Login should create a new session, not reuse attacker\'s session');
         
-        // New session should be valid
+        // The new bearer credential is opaque and only its hash is retained.
+        $newSession = $this->getSessionById($newSessionId);
+        $this->assertNotNull($newSession, 'New session should be persisted');
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $newSession['token_hash']);
+
+        // A predictable numeric cookie cannot select either database row.
+        unset($_COOKIE[SESSION_COOKIE_NAME]);
         $_COOKIE['session_id'] = (string)$newSessionId;
-        $session = requireSession($this->pdo);
-        $this->assertNotNull($session, 'New session should be valid');
-        $this->assertSame($userId, (int)$session['user_id']);
+        $this->assertNull(requireSession($this->pdo));
         
         // Attacker's session should still exist (current implementation doesn't invalidate old sessions)
         // This is acceptable - the user gets a new session, attacker's session is separate

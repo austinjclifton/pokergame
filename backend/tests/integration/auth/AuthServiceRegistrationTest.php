@@ -57,24 +57,28 @@ final class AuthServiceRegistrationTest extends TestCase
      * Helper: Create a test session and nonce for registration.
      * Creates a temporary session (user_id=0) as required for unauthenticated users.
      */
-    private function createTestSessionAndNonce(int $ttlMinutes = 60): array
+    private function createTestSessionAndNonce(int $ttlMinutes = 60, string $userAgent = 'PHPUnit Test'): array
     {
-        // Create a temporary session for unauthenticated users (user_id=0)
+        $sessionToken = bin2hex(random_bytes(32));
         $stmt = $this->pdo->prepare("
-            INSERT INTO sessions (user_id, ip_hash, user_agent, expires_at)
-            VALUES (0, :ip_hash, 'PHPUnit Test', DATE_ADD(NOW(), INTERVAL 7 DAY))
+            INSERT INTO sessions (user_id, token_hash, ip_hash, user_agent, expires_at)
+            VALUES (NULL, :token_hash, :ip_hash, :user_agent, DATE_ADD(NOW(), INTERVAL 7 DAY))
         ");
         $stmt->execute([
+            'token_hash' => hashSessionToken($sessionToken),
             'ip_hash' => hash('sha256', '127.0.0.1'),
+            'user_agent' => $userAgent,
         ]);
         $sessionId = (int)$this->pdo->lastInsertId();
         
         // Create a nonce for this session
         $nonce = bin2hex(random_bytes(32));
         $expiresAt = date('Y-m-d H:i:s', strtotime("+{$ttlMinutes} minutes"));
-        \db_insert_nonce($this->pdo, $sessionId, $nonce, $expiresAt);
+        \db_insert_nonce($this->pdo, $sessionId, $nonce, $expiresAt, 'register');
         
-        return ['session_id' => $sessionId, 'nonce' => $nonce];
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionToken;
+        $_SERVER['HTTP_USER_AGENT'] = $userAgent;
+        return ['session_id' => $sessionId, 'session_token' => $sessionToken, 'nonce' => $nonce];
     }
 
     /**
@@ -119,7 +123,7 @@ final class AuthServiceRegistrationTest extends TestCase
 
     public function testSuccessfulRegistrationCreatesUserAndSession(): void
     {
-        $sessionNonce = $this->createTestSessionAndNonce();
+        $sessionNonce = $this->createTestSessionAndNonce(60, 'Mozilla/5.0 Test Browser');
         
         $_SERVER['REMOTE_ADDR'] = '192.168.1.100';
         $_SERVER['HTTP_USER_AGENT'] = 'Mozilla/5.0 Test Browser';
@@ -233,6 +237,7 @@ final class AuthServiceRegistrationTest extends TestCase
 
     public function testRegistrationRejectsInvalidNonce(): void
     {
+        $this->createTestSessionAndNonce();
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
@@ -256,9 +261,9 @@ final class AuthServiceRegistrationTest extends TestCase
         $stmt = $this->pdo->prepare("
             UPDATE csrf_nonces
             SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE)
-            WHERE nonce = :nonce
+            WHERE nonce_hash = :nonce_hash
         ");
-        $stmt->execute(['nonce' => $sessionNonce['nonce']]);
+        $stmt->execute(['nonce_hash' => hash('sha256', $sessionNonce['nonce'])]);
         
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
@@ -281,9 +286,9 @@ final class AuthServiceRegistrationTest extends TestCase
         
         // Mark nonce as used
         $stmt = $this->pdo->prepare("
-            SELECT id FROM csrf_nonces WHERE nonce = :nonce
+            SELECT id FROM csrf_nonces WHERE nonce_hash = :nonce_hash
         ");
-        $stmt->execute(['nonce' => $sessionNonce['nonce']]);
+        $stmt->execute(['nonce_hash' => hash('sha256', $sessionNonce['nonce'])]);
         $nonceRow = $stmt->fetch(PDO::FETCH_ASSOC);
         \db_mark_nonce_used($this->pdo, (int)$nonceRow['id']);
         
@@ -348,9 +353,9 @@ final class AuthServiceRegistrationTest extends TestCase
         
         // Verify nonce is marked as used
         $stmt = $this->pdo->prepare("
-            SELECT used_at FROM csrf_nonces WHERE nonce = :nonce
+            SELECT used_at FROM csrf_nonces WHERE nonce_hash = :nonce_hash
         ");
-        $stmt->execute(['nonce' => $sessionNonce['nonce']]);
+        $stmt->execute(['nonce_hash' => hash('sha256', $sessionNonce['nonce'])]);
         $usedAt = $stmt->fetchColumn();
         $this->assertNotNull($usedAt);
     }
@@ -676,7 +681,7 @@ final class AuthServiceRegistrationTest extends TestCase
 
     public function testRegistrationCompleteFlow(): void
     {
-        $sessionNonce = $this->createTestSessionAndNonce();
+        $sessionNonce = $this->createTestSessionAndNonce(60, 'Mozilla/5.0 Integration Test');
         
         $_SERVER['REMOTE_ADDR'] = '192.168.1.50';
         $_SERVER['HTTP_USER_AGENT'] = 'Mozilla/5.0 Integration Test';
@@ -722,8 +727,8 @@ final class AuthServiceRegistrationTest extends TestCase
         $this->assertSame('online', $presence['status']);
         
         // Verify nonce is marked as used
-        $stmt = $this->pdo->prepare("SELECT used_at FROM csrf_nonces WHERE nonce = :nonce");
-        $stmt->execute(['nonce' => $sessionNonce['nonce']]);
+        $stmt = $this->pdo->prepare("SELECT used_at FROM csrf_nonces WHERE nonce_hash = :nonce_hash");
+        $stmt->execute(['nonce_hash' => hash('sha256', $sessionNonce['nonce'])]);
         $usedAt = $stmt->fetchColumn();
         $this->assertNotNull($usedAt);
         

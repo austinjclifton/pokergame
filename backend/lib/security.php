@@ -238,31 +238,42 @@ function validate_json_payload_size(string $input, int $maxBytes = 10240): array
 
 /**
  * Get client IP address from request.
- * Handles proxies by checking X-Forwarded-For header (first IP in chain).
- * Falls back to REMOTE_ADDR if no proxy headers.
+ * Forwarded headers are accepted only when REMOTE_ADDR exactly matches an
+ * address listed in TRUSTED_PROXIES (comma separated).
  * 
  * @return string Client IP address
  */
 function get_client_ip(): string {
-    // Check for proxy headers (X-Forwarded-For, X-Real-IP)
-    $headers = [
-        'HTTP_X_FORWARDED_FOR',
-        'HTTP_X_REAL_IP',
-        'HTTP_CLIENT_IP',
-    ];
-    
-    foreach ($headers as $header) {
-        if (!empty($_SERVER[$header])) {
-            $ips = explode(',', $_SERVER[$header]);
-            $ip = trim($ips[0]); // First IP in chain is the original client
-            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                return $ip;
-            }
-        }
+    $remoteAddress = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+    if (!is_trusted_proxy($remoteAddress)) {
+        return $remoteAddress;
     }
-    
-    // Fallback to REMOTE_ADDR
-    return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+
+    $forwarded = trim((string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''));
+    $candidate = trim(explode(',', $forwarded)[0] ?? '');
+    return filter_var($candidate, FILTER_VALIDATE_IP) !== false ? $candidate : $remoteAddress;
+}
+
+function is_trusted_proxy(string $address): bool {
+    if (filter_var($address, FILTER_VALIDATE_IP) === false) {
+        return false;
+    }
+    $configured = array_filter(array_map('trim', explode(',', (string) (getenv('TRUSTED_PROXIES') ?: ''))));
+    return in_array($address, $configured, true);
+}
+
+function request_is_https(): bool {
+    $https = strtolower((string) ($_SERVER['HTTPS'] ?? ''));
+    if ($https !== '' && $https !== 'off' && $https !== '0') {
+        return true;
+    }
+
+    $remoteAddress = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+    if (is_trusted_proxy($remoteAddress)) {
+        return strtolower(trim((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))) === 'https';
+    }
+
+    return str_starts_with(strtolower((string) (getenv('APP_ORIGIN') ?: '')), 'https://');
 }
 
 /**
@@ -553,8 +564,15 @@ function apply_rate_limiting(?int $userId = null, int $ipMaxRequests = 100, int 
  * @param int $windowSeconds Time window (default: 60 seconds)
  * @return bool True if allowed, false if rate limited (sends response and exits)
  */
-function apply_auth_rate_limiting(string $ip, int $maxRequests = 5, int $windowSeconds = 60): bool {
-    $ipLimit = check_ip_rate_limit($ip, $maxRequests, $windowSeconds);
+function apply_auth_rate_limiting(
+    PDO $pdo,
+    string $ip,
+    int $maxRequests = 5,
+    int $windowSeconds = 60,
+    string $scope = 'authentication',
+): bool {
+    require_once __DIR__ . '/../app/db/auth_rate_limits.php';
+    $ipLimit = db_consume_auth_rate_limit($pdo, $scope, $ip, $maxRequests, $windowSeconds);
     if (!$ipLimit['allowed']) {
         http_response_code(429);
         header('Retry-After: ' . ($ipLimit['retry_after'] ?? $windowSeconds));
@@ -597,7 +615,7 @@ function apply_auth_rate_limiting(string $ip, int $maxRequests = 5, int $windowS
  * 
  * @throws RuntimeException If validation fails
  */
-function validate_csrf_token(PDO $pdo, string $nonce, ?int $sessionId = null): void {
+function validate_csrf_token(PDO $pdo, string $nonce, ?int $sessionId = null, string $purpose = 'csrf'): void {
     require_once __DIR__ . '/../app/db/nonces.php';
     require_once __DIR__ . '/../app/db/sessions.php';
     
@@ -605,8 +623,11 @@ function validate_csrf_token(PDO $pdo, string $nonce, ?int $sessionId = null): v
         throw new RuntimeException('CSRF_TOKEN_MISSING');
     }
     
-    // Fetch nonce from database
-    $row = db_get_nonce($pdo, $nonce);
+    if ($sessionId === null || $sessionId <= 0) {
+        throw new RuntimeException('CSRF_TOKEN_SESSION_MISMATCH');
+    }
+
+    $row = db_get_nonce($pdo, $nonce, $purpose);
     if (!$row) {
         throw new RuntimeException('CSRF_TOKEN_INVALID');
     }
@@ -622,19 +643,15 @@ function validate_csrf_token(PDO $pdo, string $nonce, ?int $sessionId = null): v
         throw new RuntimeException('CSRF_TOKEN_EXPIRED');
     }
     
-    // If session ID provided, verify nonce belongs to this session
-    if ($sessionId !== null) {
-        if ((int)$row['session_id'] !== $sessionId) {
-            throw new RuntimeException('CSRF_TOKEN_SESSION_MISMATCH');
-        }
-        
-        // Verify session is still valid
-        if (!db_is_session_valid($pdo, $sessionId)) {
-            throw new RuntimeException('CSRF_TOKEN_SESSION_INVALID');
-        }
+    if ((int)$row['session_id'] !== $sessionId) {
+        throw new RuntimeException('CSRF_TOKEN_SESSION_MISMATCH');
     }
-    
-    // Mark nonce as used (consumed)
-    db_mark_nonce_used($pdo, (int)$row['id']);
+    if (!db_is_session_valid($pdo, $sessionId)) {
+        throw new RuntimeException('CSRF_TOKEN_SESSION_INVALID');
+    }
+
+    if (!db_consume_nonce($pdo, $nonce, $purpose, $sessionId)) {
+        throw new RuntimeException('CSRF_TOKEN_ALREADY_USED');
+    }
 }
 

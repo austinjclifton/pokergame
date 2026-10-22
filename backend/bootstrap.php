@@ -27,26 +27,12 @@ require_once BASE_PATH . '/vendor/autoload.php';
 // Load config files
 // ---------------------------------------------------------------
 require_once BASE_PATH . '/config/db.php';
+require_once BASE_PATH . '/lib/security.php';
 require_once BASE_PATH . '/config/security.php';
-
-// ---------------------------------------------------------------
-// Session hardening
-// ---------------------------------------------------------------
-if (session_status() === PHP_SESSION_NONE) {
-    $https = strtolower((string) ($_SERVER['HTTPS'] ?? ''));
-    $isHttps = $https !== '' && $https !== 'off' && $https !== '0';
-    ini_set('session.cookie_httponly', '1');
-    ini_set('session.cookie_secure', $isHttps ? '1' : '0');
-    ini_set('session.cookie_samesite', 'Lax');
-    ini_set('session.use_only_cookies', '1');
-    ini_set('session.use_strict_mode', '1');
-    session_start();
-}
 
 // ---------------------------------------------------------------
 // Load internal libraries
 // ---------------------------------------------------------------
-require_once BASE_PATH . '/lib/security.php';
 require_once BASE_PATH . '/lib/session.php';
 require_once BASE_PATH . '/app/services/NonceService.php';
 require_once BASE_PATH . '/app/services/AuthService.php';

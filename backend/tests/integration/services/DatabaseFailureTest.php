@@ -102,13 +102,20 @@ final class DatabaseFailureTest extends TestCase
         // Create a valid nonce
         $ipHash = hash('sha256', '127.0.0.1');
         $expires = (new DateTime())->modify('+1 hour')->format('Y-m-d H:i:s');
-        $sessionId = db_insert_session($this->pdo, 0, $ipHash, 'PHPUnit Test', $expires);
+        $sessionToken = generateSessionToken();
+        $sessionId = db_insert_temporary_session(
+            $this->pdo,
+            $ipHash,
+            'PHPUnit Test',
+            $expires,
+            hashSessionToken($sessionToken),
+        );
         $nonce = bin2hex(random_bytes(32));
-        db_insert_nonce($this->pdo, $sessionId, $nonce, $expires);
+        db_insert_nonce($this->pdo, $sessionId, $nonce, $expires, 'register');
         
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionToken;
         
         $unique = substr(uniqid('', true), -8);
         $username = 'dbfail_reg' . $unique;
@@ -132,10 +139,18 @@ final class DatabaseFailureTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
-        $sessionId = createSession($this->pdo, $userId, '127.0.0.1', 'PHPUnit Test');
+        $sessionToken = generateSessionToken();
+        $sessionId = db_insert_session(
+            $this->pdo,
+            $userId,
+            hash('sha256', '127.0.0.1'),
+            'PHPUnit Test',
+            date('Y-m-d H:i:s', strtotime('+30 days')),
+            hashSessionToken($sessionToken),
+        );
         
         // Normal session check should work
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionToken;
         $result = requireSession($this->pdo);
         $this->assertNotNull($result, 'Session should be valid');
         

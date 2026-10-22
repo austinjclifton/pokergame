@@ -5,10 +5,9 @@ require_once dirname(__DIR__, 2) . '/bootstrap.php';
 
 const AUDIT_ENDPOINT_DEFAULT_LIMIT = 100;
 const AUDIT_ENDPOINT_MAX_LIMIT = 1000;
-const AUDIT_ENDPOINT_ADMIN_USERNAME = 'admin';
 
 setAllowedMethods('GET, OPTIONS');
-apply_auth_rate_limiting(get_client_ip(), 30, 60);
+apply_auth_rate_limiting($pdo, get_client_ip(), 30, 60, 'audit');
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -31,7 +30,7 @@ function require_audit_admin(PDO $pdo): void
 		throw $e;
 	}
 
-	if (($user['username'] ?? null) !== AUDIT_ENDPOINT_ADMIN_USERNAME) {
+	if (($user['is_admin'] ?? false) !== true) {
 		json_out(['ok' => false, 'error' => 'forbidden'], 403);
 	}
 }

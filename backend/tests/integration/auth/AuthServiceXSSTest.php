@@ -66,13 +66,13 @@ final class AuthServiceXSSTest extends TestCase
      */
     private function createTestSessionAndNonce(): array
     {
-        // Create a temporary session for unauthenticated users (user_id=0)
-        // This matches what nonce_issue() does when no session exists
+        $sessionToken = bin2hex(random_bytes(32));
         $stmt = $this->pdo->prepare("
-            INSERT INTO sessions (user_id, ip_hash, user_agent, expires_at)
-            VALUES (0, :ip_hash, 'PHPUnit Test', DATE_ADD(NOW(), INTERVAL 7 DAY))
+            INSERT INTO sessions (user_id, token_hash, ip_hash, user_agent, expires_at)
+            VALUES (NULL, :token_hash, :ip_hash, 'PHPUnit Test', DATE_ADD(NOW(), INTERVAL 7 DAY))
         ");
         $stmt->execute([
+            'token_hash' => hashSessionToken($sessionToken),
             'ip_hash' => hash('sha256', '127.0.0.1'),
         ]);
         $sessionId = (int)$this->pdo->lastInsertId();
@@ -82,9 +82,9 @@ final class AuthServiceXSSTest extends TestCase
         require_once __DIR__ . '/../../../app/db/nonces.php';
         $nonce = bin2hex(random_bytes(32));
         $expiresAt = date('Y-m-d H:i:s', strtotime('+1 hour'));
-        \db_insert_nonce($this->pdo, $sessionId, $nonce, $expiresAt);
+        \db_insert_nonce($this->pdo, $sessionId, $nonce, $expiresAt, 'register');
         
-        return ['session_id' => $sessionId, 'nonce' => $nonce];
+        return ['session_id' => $sessionId, 'session_token' => $sessionToken, 'nonce' => $nonce];
     }
 
     // ============================================================================
@@ -95,7 +95,7 @@ final class AuthServiceXSSTest extends TestCase
     {
         $sessionNonce = $this->createTestSessionAndNonce();
         
-        $_COOKIE['session_id'] = (string)$sessionNonce['session_id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionNonce['session_token'];
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
@@ -115,7 +115,7 @@ final class AuthServiceXSSTest extends TestCase
     {
         $sessionNonce = $this->createTestSessionAndNonce();
         
-        $_COOKIE['session_id'] = (string)$sessionNonce['session_id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionNonce['session_token'];
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
@@ -135,7 +135,7 @@ final class AuthServiceXSSTest extends TestCase
     {
         $sessionNonce = $this->createTestSessionAndNonce();
         
-        $_COOKIE['session_id'] = (string)$sessionNonce['session_id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionNonce['session_token'];
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
@@ -155,7 +155,7 @@ final class AuthServiceXSSTest extends TestCase
     {
         $sessionNonce = $this->createTestSessionAndNonce();
         
-        $_COOKIE['session_id'] = (string)$sessionNonce['session_id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionNonce['session_token'];
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
@@ -175,7 +175,7 @@ final class AuthServiceXSSTest extends TestCase
     {
         $sessionNonce = $this->createTestSessionAndNonce();
         
-        $_COOKIE['session_id'] = (string)$sessionNonce['session_id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionNonce['session_token'];
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
@@ -237,7 +237,7 @@ final class AuthServiceXSSTest extends TestCase
     {
         $sessionNonce = $this->createTestSessionAndNonce();
         
-        $_COOKIE['session_id'] = (string)$sessionNonce['session_id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionNonce['session_token'];
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         

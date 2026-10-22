@@ -20,6 +20,8 @@ final class WebSocketTokenTest extends TestCase
 {
     private PDO $pdo;
     private bool $inTransaction = false;
+    /** @var array<int, string> */
+    private array $sessionTokens = [];
 
     protected function setUp(): void
     {
@@ -44,7 +46,7 @@ final class WebSocketTokenTest extends TestCase
         }
         
         // Clean up globals
-        unset($_COOKIE['session_id']);
+        unset($_COOKIE['session_id'], $_COOKIE[SESSION_COOKIE_NAME]);
         $_SERVER = [];
     }
 
@@ -77,7 +79,17 @@ final class WebSocketTokenTest extends TestCase
     {
         $ipHash = hash('sha256', '127.0.0.1');
         $expiresAt = date('Y-m-d H:i:s', strtotime('+7 days'));
-        return \db_insert_session($this->pdo, $userId, $ipHash, 'PHPUnit Test', $expiresAt);
+        $token = generateSessionToken();
+        $sessionId = \db_insert_session(
+            $this->pdo,
+            $userId,
+            $ipHash,
+            'PHPUnit Test',
+            $expiresAt,
+            hashSessionToken($token),
+        );
+        $this->sessionTokens[$sessionId] = $token;
+        return $sessionId;
     }
 
     /**
@@ -85,7 +97,7 @@ final class WebSocketTokenTest extends TestCase
      */
     private function setSessionCookie(int $sessionId): void
     {
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $_COOKIE[SESSION_COOKIE_NAME] = $this->sessionTokens[$sessionId];
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
     }
@@ -101,17 +113,18 @@ final class WebSocketTokenTest extends TestCase
         
         $token = \db_create_ws_nonce($this->pdo, $sessionId, 30);
         
-        // Verify token format (32 hex chars = 16 bytes = 128 bits)
-        // TODO: Update to 64 hex chars (32 bytes = 256 bits) for stronger entropy
-        $this->assertSame(32, strlen($token), 'Token should be 32 hex characters (16 bytes)');
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $token, 'Token should be lowercase hex');
+        $this->assertSame(64, strlen($token), 'Token should contain 256 bits of entropy');
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $token, 'Token should be lowercase hex');
         
         // Verify token exists in database with all required fields
-        $stmt = $this->pdo->prepare("SELECT * FROM csrf_nonces WHERE nonce = :token");
-        $stmt->execute(['token' => $token]);
+        $stmt = $this->pdo->prepare("SELECT * FROM csrf_nonces WHERE nonce_hash = :token_hash");
+        $stmt->execute(['token_hash' => hash('sha256', $token)]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         
         $this->assertNotNull($row, 'Token should exist in database');
+        $this->assertArrayNotHasKey('nonce', $row, 'Raw WebSocket token must not be persisted');
+        $this->assertSame(hash('sha256', $token), $row['nonce_hash']);
+        $this->assertSame('websocket', $row['purpose']);
         $this->assertSame($sessionId, (int)$row['session_id'], 'Token should be linked to session');
         $this->assertNull($row['used_at'], 'Token should not be marked as used');
         $this->assertNotNull($row['created_at'], 'Token should have created_at timestamp');
@@ -120,11 +133,11 @@ final class WebSocketTokenTest extends TestCase
         // Verify expires_at is in the future (approximately 30 seconds from now)
         // Use database time comparison to avoid timezone issues
         $stmt2 = $this->pdo->prepare("
-            SELECT TIMESTAMPDIFF(SECOND, NOW(), expires_at) as seconds_until_expiry
+            SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), expires_at) as seconds_until_expiry
             FROM csrf_nonces
-            WHERE nonce = :token
+            WHERE nonce_hash = :token_hash
         ");
-        $stmt2->execute(['token' => $token]);
+        $stmt2->execute(['token_hash' => hash('sha256', $token)]);
         $expiryResult = $stmt2->fetch(PDO::FETCH_ASSOC);
         
         $this->assertNotFalse($expiryResult, 'Should be able to query expiry time');
@@ -195,7 +208,7 @@ final class WebSocketTokenTest extends TestCase
         $this->assertArrayHasKey('token', $result);
         $this->assertArrayHasKey('expiresIn', $result);
         $this->assertSame(30, $result['expiresIn']);
-        $this->assertSame(32, strlen($result['token']), 'Token should be 32 hex characters');
+        $this->assertSame(64, strlen($result['token']), 'Token should contain 256 bits of entropy');
     }
 
     public function testNonceIssueWsTokenReturnsCorrectFormat(): void
@@ -209,7 +222,7 @@ final class WebSocketTokenTest extends TestCase
         $this->assertIsString($result['token']);
         $this->assertIsInt($result['expiresIn']);
         $this->assertSame(60, $result['expiresIn']);
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $result['token']);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $result['token']);
     }
 
     // ============================================================================
@@ -265,8 +278,8 @@ final class WebSocketTokenTest extends TestCase
             \db_consume_ws_nonce($this->pdo, $token);
             
             // Verify token is marked as used
-            $stmt = $this->pdo->prepare("SELECT used_at FROM csrf_nonces WHERE nonce = :token");
-            $stmt->execute(['token' => $token]);
+            $stmt = $this->pdo->prepare("SELECT used_at FROM csrf_nonces WHERE nonce_hash = :token_hash");
+            $stmt->execute(['token_hash' => hash('sha256', $token)]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
             
             $this->assertNotNull($row['used_at'], 'Token should be marked as used');
@@ -377,8 +390,8 @@ final class WebSocketTokenTest extends TestCase
             $token2 = \db_create_ws_nonce($this->pdo, $sessionId1, 30);
             
             // Verify token is linked to session 1 (not session 2)
-            $stmt = $this->pdo->prepare("SELECT session_id, user_id FROM csrf_nonces n JOIN sessions s ON s.id = n.session_id WHERE n.nonce = :token");
-            $stmt->execute(['token' => $token2]);
+            $stmt = $this->pdo->prepare("SELECT session_id, user_id FROM csrf_nonces n JOIN sessions s ON s.id = n.session_id WHERE n.nonce_hash = :token_hash");
+            $stmt->execute(['token_hash' => hash('sha256', $token2)]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
             $this->assertEquals($sessionId1, (int)$row['session_id'], 'Token should be linked to session 1');
             $this->assertEquals($userId1, (int)$row['user_id'], 'Token should be linked to user 1');
@@ -410,9 +423,9 @@ final class WebSocketTokenTest extends TestCase
             SELECT n.*, s.user_id, s.revoked_at as session_revoked
             FROM csrf_nonces n
             JOIN sessions s ON s.id = n.session_id
-            WHERE n.nonce = :token
+            WHERE n.nonce_hash = :token_hash
         ");
-        $stmt->execute(['token' => $token]);
+        $stmt->execute(['token_hash' => hash('sha256', $token)]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         
         $this->assertNotNull($row, 'Token should exist in database');
@@ -426,11 +439,11 @@ final class WebSocketTokenTest extends TestCase
         // Verify expires_at is approximately 30 seconds from now
         // Use database time comparison to avoid timezone issues
         $stmt2 = $this->pdo->prepare("
-            SELECT TIMESTAMPDIFF(SECOND, NOW(), expires_at) as seconds_until_expiry
+            SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), expires_at) as seconds_until_expiry
             FROM csrf_nonces
-            WHERE nonce = :token
+            WHERE nonce_hash = :token_hash
         ");
-        $stmt2->execute(['token' => $token]);
+        $stmt2->execute(['token_hash' => hash('sha256', $token)]);
         $expiryResult = $stmt2->fetch(PDO::FETCH_ASSOC);
         
         $this->assertNotFalse($expiryResult, 'Should be able to query expiry time');
@@ -599,9 +612,9 @@ final class WebSocketTokenTest extends TestCase
             $stmt = $this->pdo->prepare("
                 SELECT expires_at, created_at,
                        TIMESTAMPDIFF(SECOND, created_at, expires_at) as ttl_seconds
-                FROM csrf_nonces WHERE nonce = :token
+                FROM csrf_nonces WHERE nonce_hash = :token_hash
             ");
-            $stmt->execute(['token' => $token]);
+            $stmt->execute(['token_hash' => hash('sha256', $token)]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
             
             $this->assertNotNull($row);
@@ -639,8 +652,8 @@ final class WebSocketTokenTest extends TestCase
             $this->assertNotNull($result1);
             
             // Verify token is marked as used (race condition prevention)
-            $stmt = $this->pdo->prepare("SELECT used_at FROM csrf_nonces WHERE nonce = :token");
-            $stmt->execute(['token' => $token]);
+            $stmt = $this->pdo->prepare("SELECT used_at FROM csrf_nonces WHERE nonce_hash = :token_hash");
+            $stmt->execute(['token_hash' => hash('sha256', $token)]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
             $this->assertNotNull($row['used_at'], 'Token should be marked as used after consumption');
         } finally {

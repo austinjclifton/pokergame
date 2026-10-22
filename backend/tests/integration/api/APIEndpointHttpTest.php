@@ -34,6 +34,7 @@ final class APIEndpointHttpTest extends TestCase
         RateLimitStorage::resetForTest();
         
         $this->pdo->exec("SET FOREIGN_KEY_CHECKS=0");
+        $this->pdo->exec('DELETE FROM auth_rate_limits');
         $this->pdo->beginTransaction();
         $this->inTransaction = true;
         
@@ -73,15 +74,15 @@ final class APIEndpointHttpTest extends TestCase
         return db_insert_user($this->pdo, $uniqueUsername, $email, $passwordHash);
     }
 
-    /**
-     * Helper: Create a test session and return session ID.
-     */
-    private function createTestSession(int $userId): int
+    /** @return array{id:int,token:string} */
+    private function createTestSession(int $userId, string $ip = '127.0.0.1', string $userAgent = 'PHPUnit Test'): array
     {
         require_once __DIR__ . '/../../../app/db/sessions.php';
-        $ipHash = hash('sha256', '127.0.0.1');
+        $token = bin2hex(random_bytes(32));
+        $ipHash = hash('sha256', $ip);
         $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
-        return db_insert_session($this->pdo, $userId, $ipHash, 'PHPUnit Test', $expiresAt);
+        $id = db_insert_session($this->pdo, $userId, $ipHash, $userAgent, $expiresAt, hashSessionToken($token));
+        return ['id' => $id, 'token' => $token];
     }
 
     // ============================================================================
@@ -124,6 +125,8 @@ final class APIEndpointHttpTest extends TestCase
         $this->assertTrue($data['ok'] ?? false);
         $this->assertArrayHasKey('user', $data);
         $this->assertArrayNotHasKey('session_id', $data['user'], 'API must not expose the database session identifier');
+        $this->assertArrayNotHasKey('session_token', $data['user']);
+        $this->assertArrayNotHasKey('token', $data['user']);
     }
 
     // ============================================================================
@@ -173,9 +176,7 @@ final class APIEndpointHttpTest extends TestCase
         // Create session with matching IP and user agent
         $ip = '127.0.0.1';
         $userAgent = 'PHPUnit Test';
-        $ipHash = hash('sha256', $ip);
-        $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
-        $sessionId = db_insert_session($this->pdo, $userId, $ipHash, $userAgent, $expiresAt);
+        $session = $this->createTestSession($userId, $ip, $userAgent);
         
         // Commit transaction so separate process can see the data
         if ($this->pdo->inTransaction()) {
@@ -188,7 +189,7 @@ final class APIEndpointHttpTest extends TestCase
             ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => $ip, 'HTTP_USER_AGENT' => $userAgent],
             [],
             [],
-            ['session_id' => (string)$sessionId],
+            [SESSION_COOKIE_NAME => $session['token']],
             null // No request body
         );
         
@@ -208,6 +209,28 @@ final class APIEndpointHttpTest extends TestCase
         // The user object from requireSession() has 'user_id', not 'id'
         assertJsonHasKeys($data['user'], ['user_id', 'username', 'email']);
         $this->assertArrayNotHasKey('session_id', $data['user'], 'API must not expose the database session identifier');
+    }
+
+    public function testMeRejectsPredictableNumericSessionCookie(): void
+    {
+        $userId = $this->createTestUser('numeric_cookie_user');
+        $session = $this->createTestSession($userId);
+
+        if ($this->pdo->inTransaction()) {
+            $this->pdo->commit();
+            $this->pdo->beginTransaction();
+        }
+
+        $res = run_endpoint(
+            __DIR__ . '/../../../public/api/me.php',
+            ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => '127.0.0.1', 'HTTP_USER_AGENT' => 'PHPUnit Test'],
+            [],
+            [],
+            ['session_id' => (string) $session['id']],
+        );
+
+        $this->assertSame(401, $res['status']);
+        $this->assertFalse(json_decode($res['body'], true)['ok'] ?? true);
     }
 
     public function testMeRejectsPostMethod(): void
@@ -246,15 +269,14 @@ final class APIEndpointHttpTest extends TestCase
         // Create session with matching IP and user agent
         $ip = '127.0.0.1';
         $userAgent = 'PHPUnit Test';
-        $ipHash = hash('sha256', $ip);
-        $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
-        $sessionId = db_insert_session($this->pdo, $userId, $ipHash, $userAgent, $expiresAt);
+        $session = $this->createTestSession($userId, $ip, $userAgent);
+        $sessionId = $session['id'];
         
         // Create CSRF token for logout
         require_once __DIR__ . '/../../../app/db/nonces.php';
         $csrfExpiresAt = date('Y-m-d H:i:s', strtotime('+15 minutes'));
         $csrfToken = bin2hex(random_bytes(32));
-        db_insert_nonce($this->pdo, $sessionId, $csrfToken, $csrfExpiresAt);
+        db_insert_nonce($this->pdo, $sessionId, $csrfToken, $csrfExpiresAt, 'logout');
         
         // Commit transaction so separate process can see the data
         if ($this->pdo->inTransaction()) {
@@ -268,7 +290,7 @@ final class APIEndpointHttpTest extends TestCase
             ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => $ip, 'HTTP_USER_AGENT' => $userAgent],
             [],
             [],
-            ['session_id' => (string)$sessionId],
+            [SESSION_COOKIE_NAME => $session['token']],
             json_encode(['token' => $csrfToken]) // CSRF token in request body
         );
         
@@ -348,9 +370,8 @@ final class APIEndpointHttpTest extends TestCase
         // Create session with matching IP and user agent
         $ip = '127.0.0.1';
         $userAgent = 'PHPUnit Test';
-        $ipHash = hash('sha256', $ip);
-        $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
-        $sessionId = db_insert_session($this->pdo, $userId, $ipHash, $userAgent, $expiresAt);
+        $session = $this->createTestSession($userId, $ip, $userAgent);
+        $sessionId = $session['id'];
         
         // Commit transaction so separate process can see the data
         if ($this->pdo->inTransaction()) {
@@ -363,7 +384,7 @@ final class APIEndpointHttpTest extends TestCase
             ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => $ip, 'HTTP_USER_AGENT' => $userAgent],
             [],
             [],
-            ['session_id' => (string)$sessionId],
+            [SESSION_COOKIE_NAME => $session['token']],
             null // No request body
         );
         
@@ -380,15 +401,13 @@ final class APIEndpointHttpTest extends TestCase
             'expiresIn' => 'integer',
         ]);
         
-        // Token should be 32 hex characters (16 bytes = 128 bits) based on current implementation
-        // TODO: Update to 64 hex characters (32 bytes = 256 bits) for stronger entropy
-        $this->assertSame(32, strlen($data['token']), 'Token should be 32 hex characters (128 bits)');
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $data['token'], 'Token should be lowercase hex');
+        $this->assertSame(64, strlen($data['token']), 'Token should contain 256 bits of entropy');
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $data['token'], 'Token should be lowercase hex');
         $this->assertGreaterThan(0, $data['expiresIn'], 'expiresIn should be positive');
         
         // Verify token is persisted in database
         require_once __DIR__ . '/../../../app/db/nonces.php';
-        $nonce = db_get_nonce($this->pdo, $data['token']);
+        $nonce = db_get_nonce($this->pdo, $data['token'], 'websocket');
         $this->assertNotFalse($nonce, 'Token should exist in database');
         $this->assertEquals($sessionId, (int)$nonce['session_id'], 'Token should be linked to session');
         $this->assertNull($nonce['used_at'], 'Token should not be used yet');
@@ -400,9 +419,7 @@ final class APIEndpointHttpTest extends TestCase
         // Create session with matching IP and user agent
         $ip = '127.0.0.1';
         $userAgent = 'PHPUnit Test';
-        $ipHash = hash('sha256', $ip);
-        $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
-        $sessionId = db_insert_session($this->pdo, $userId, $ipHash, $userAgent, $expiresAt);
+        $session = $this->createTestSession($userId, $ip, $userAgent);
         
         // Commit transaction so separate process can see the data
         if ($this->pdo->inTransaction()) {
@@ -416,7 +433,7 @@ final class APIEndpointHttpTest extends TestCase
             ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => $ip, 'HTTP_USER_AGENT' => $userAgent],
             [],
             [],
-            ['session_id' => (string)$sessionId],
+            [SESSION_COOKIE_NAME => $session['token']],
             null // No request body
         );
         
@@ -486,9 +503,7 @@ final class APIEndpointHttpTest extends TestCase
         $userId = $this->createTestUser('audit_non_admin');
         $ip = '127.0.0.1';
         $userAgent = 'PHPUnit Test';
-        $ipHash = hash('sha256', $ip);
-        $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
-        $sessionId = db_insert_session($this->pdo, $userId, $ipHash, $userAgent, $expiresAt);
+        $session = $this->createTestSession($userId, $ip, $userAgent);
 
         if ($this->pdo->inTransaction()) {
             $this->pdo->commit();
@@ -500,7 +515,7 @@ final class APIEndpointHttpTest extends TestCase
             ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => $ip, 'HTTP_USER_AGENT' => $userAgent],
             [],
             [],
-            ['session_id' => (string) $sessionId]
+            [SESSION_COOKIE_NAME => $session['token']]
         );
 
         $this->assertSame(403, $res['status'], 'Should return 403 Forbidden for non-admin users');
@@ -509,6 +524,55 @@ final class APIEndpointHttpTest extends TestCase
         $this->assertIsArray($data);
         $this->assertFalse($data['ok'] ?? true);
         $this->assertSame('forbidden', $data['error'] ?? null);
+    }
+
+    public function testAuditAllowsExplicitAdminAndRedactsRawIpAddresses(): void
+    {
+        $userId = $this->createTestUser('audit_explicit_admin');
+        $this->pdo->prepare('UPDATE users SET is_admin = 1 WHERE id = :id')->execute(['id' => $userId]);
+        $session = $this->createTestSession($userId);
+
+        if ($this->pdo->inTransaction()) {
+            $this->pdo->commit();
+            $this->pdo->beginTransaction();
+        }
+
+        $res = run_endpoint(
+            __DIR__ . '/../../../public/api/audit.php',
+            ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => '127.0.0.1', 'HTTP_USER_AGENT' => 'PHPUnit Test'],
+            [],
+            [],
+            [SESSION_COOKIE_NAME => $session['token']],
+        );
+
+        $this->assertSame(200, $res['status'], substr($res['body'], 0, 200));
+        $data = json_decode($res['body'], true);
+        $this->assertTrue($data['ok'] ?? false);
+        foreach ($data['logs'] ?? [] as $log) {
+            $this->assertArrayNotHasKey('ip_address', $log);
+        }
+    }
+
+    public function testAuthenticationRateLimitPersistsAcrossSeparateRequests(): void
+    {
+        $statuses = [];
+        for ($attempt = 0; $attempt < 6; $attempt++) {
+            $response = run_endpoint(
+                __DIR__ . '/../../../public/api/login.php',
+                [
+                    'REQUEST_METHOD' => 'POST',
+                    'REMOTE_ADDR' => '198.51.100.45',
+                    'HTTP_USER_AGENT' => 'Rate Limit Test',
+                ],
+                [],
+                [],
+                [],
+                json_encode(['username' => 'missing_user', 'password' => 'wrong-password']),
+            );
+            $statuses[] = $response['status'];
+        }
+
+        $this->assertSame([401, 401, 401, 401, 401, 429], $statuses);
     }
 }
 

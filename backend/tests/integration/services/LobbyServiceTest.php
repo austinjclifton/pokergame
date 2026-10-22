@@ -21,6 +21,8 @@ final class LobbyServiceTest extends TestCase
 {
     private PDO $pdo;
     private bool $inTransaction = false;
+    /** @var array<int, string> */
+    private array $sessionTokens = [];
 
     protected function setUp(): void
     {
@@ -87,7 +89,17 @@ final class LobbyServiceTest extends TestCase
     {
         $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
         $ipHash = hash('sha256', '127.0.0.1');
-        return \db_insert_session($this->pdo, $userId, $ipHash, 'PHPUnit Test', $expiresAt);
+        $token = generateSessionToken();
+        $sessionId = \db_insert_session(
+            $this->pdo,
+            $userId,
+            $ipHash,
+            'PHPUnit Test',
+            $expiresAt,
+            hashSessionToken($token),
+        );
+        $this->sessionTokens[$sessionId] = $token;
+        return $sessionId;
     }
 
     /**
@@ -95,7 +107,7 @@ final class LobbyServiceTest extends TestCase
      */
     private function setSessionCookie(int $sessionId): void
     {
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $_COOKIE[SESSION_COOKIE_NAME] = $this->sessionTokens[$sessionId];
     }
 
     /**

@@ -1,6 +1,8 @@
 <?php
 // backend/config/security.php
 // -----------------------------------------------------------------------------
+
+require_once __DIR__ . '/../lib/security.php';
 // Centralized HTTP security and CORS configuration for all API endpoints.
 // Include this at the top of every public API file to ensure consistent
 // and secure headers across the PokerGame backend.
@@ -18,9 +20,7 @@ header('Permissions-Policy: camera=(), geolocation=(), microphone=()');
 header('Cache-Control: no-store');
 
 // Enable HSTS only when HTTPS is used (do not force on localhost)
-$https = strtolower((string) ($_SERVER['HTTPS'] ?? ''));
-$isHttps = $https !== '' && $https !== 'off' && $https !== '0';
-if ($isHttps) {
+if (request_is_https()) {
     header('Strict-Transport-Security: max-age=31536000; includeSubDomains; preload');
 }
 

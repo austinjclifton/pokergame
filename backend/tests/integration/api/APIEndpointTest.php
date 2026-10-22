@@ -14,6 +14,8 @@ require_once __DIR__ . '/../db/BaseDBIntegrationTest.php';
  */
 final class APIEndpointTest extends BaseDBIntegrationTest
 {
+    /** @var array<int,string> */
+    private array $sessionTokens = [];
     /**
      * Load database functions and services required for API endpoint tests
      */
@@ -83,7 +85,7 @@ final class APIEndpointTest extends BaseDBIntegrationTest
      */
     private function setSessionCookie(int $sessionId): void
     {
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $_COOKIE[SESSION_COOKIE_NAME] = $this->sessionTokens[$sessionId] ?? '';
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
     }
@@ -98,7 +100,9 @@ final class APIEndpointTest extends BaseDBIntegrationTest
         $ipHash = hash('sha256', $ip);
         $expires = (new DateTime())->modify('+7 days')->format('Y-m-d H:i:s');
         
-        $sessionId = db_insert_session($this->pdo, $userId, $ipHash, $userAgent, $expires);
+        $token = bin2hex(random_bytes(32));
+        $sessionId = db_insert_session($this->pdo, $userId, $ipHash, $userAgent, $expires, hashSessionToken($token));
+        $this->sessionTokens[$sessionId] = $token;
         
         // Set cookie and server vars to match
         $this->setSessionCookie($sessionId);
@@ -238,7 +242,7 @@ final class APIEndpointTest extends BaseDBIntegrationTest
         
         $this->assertArrayHasKey('token', $result);
         $this->assertArrayHasKey('expiresIn', $result);
-        $this->assertSame(32, strlen($result['token']), 'WS token should be 32 hex characters');
+        $this->assertSame(64, strlen($result['token']), 'WS token should contain 256 bits of entropy');
         $this->assertSame(30, $result['expiresIn']);
     }
 

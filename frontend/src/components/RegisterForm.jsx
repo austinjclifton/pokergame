@@ -64,7 +64,7 @@ export default function RegisterForm({ onRegister }) {
 
     try {
       // 1. Retrieve CSRF nonce (session cookie created here)
-      const nonceRes = await fetch(API.endpoints.nonce, {
+      const nonceRes = await fetch(`${API.endpoints.nonce}?purpose=register`, {
         credentials: "include",
       });
 

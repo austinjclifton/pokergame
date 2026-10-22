@@ -13,8 +13,9 @@ import API from "../config/api";
  * @returns {Promise<string>} The CSRF token
  * @throws {Error} If token fetch fails
  */
-export async function fetchCsrfToken() {
-  const res = await fetch(API.endpoints.nonce, { credentials: "include" });
+export async function fetchCsrfToken(purpose) {
+  const url = `${API.endpoints.nonce}?purpose=${encodeURIComponent(purpose)}`;
+  const res = await fetch(url, { credentials: "include" });
   const data = await res.json();
   
   if (!res.ok || !data.ok || !data.nonce) {

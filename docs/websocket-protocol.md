@@ -7,6 +7,13 @@ All frames are JSON objects with a case-sensitive `type` field unless noted.
 Authentication occurs during the HTTP upgrade through `AuthenticatedServer`.
 The game connection also requires `table_id` in the request query string.
 
+As of Phase 2, both lobby and game upgrades require an exact allowed `Origin`
+and a 64-character `token` query parameter obtained from `POST
+/api/ws_token.php`. The token is 256-bit, expires after 30 seconds, is stored
+only as a hash, and can be consumed once. Persistent cookies and numeric
+session identifiers are not accepted by the WebSocket server. This narrows the
+handshake contract without changing any JSON message envelope below.
+
 ## Lobby client messages
 
 | Type | Current fields |

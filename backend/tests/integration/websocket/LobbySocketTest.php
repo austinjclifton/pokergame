@@ -103,11 +103,12 @@ final class LobbySocketTest extends TestCase
         $expiresAt = date('Y-m-d H:i:s', time() + 86400);
         
         $stmt = $this->pdo->prepare("
-            INSERT INTO sessions (user_id, ip_hash, user_agent, expires_at)
-            VALUES (:uid, :ip, :ua, :exp)
+            INSERT INTO sessions (user_id, token_hash, ip_hash, user_agent, expires_at)
+            VALUES (:uid, :token_hash, :ip, :ua, :exp)
         ");
         $stmt->execute([
             'uid' => $userId,
+            'token_hash' => hash('sha256', random_bytes(32)),
             'ip' => $ipHash,
             'ua' => 'Test User Agent',
             'exp' => $expiresAt,

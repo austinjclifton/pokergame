@@ -17,12 +17,16 @@ use PHPUnit\Framework\TestCase;
  */
 final class RateLimitingTest extends TestCase
 {
+    private string|false $originalTrustedProxies;
+
     protected function setUp(): void
     {
         require_once __DIR__ . '/../../lib/security.php';
         
         // Reset rate limit storage using public method (no reflection needed)
         RateLimitStorage::resetForTest();
+        $this->originalTrustedProxies = getenv('TRUSTED_PROXIES');
+        putenv('TRUSTED_PROXIES');
     }
     
     protected function tearDown(): void
@@ -35,6 +39,11 @@ final class RateLimitingTest extends TestCase
         unset($_SERVER['HTTP_X_FORWARDED_FOR']);
         unset($_SERVER['HTTP_X_REAL_IP']);
         unset($_SERVER['HTTP_CLIENT_IP']);
+        if ($this->originalTrustedProxies === false) {
+            putenv('TRUSTED_PROXIES');
+        } else {
+            putenv('TRUSTED_PROXIES=' . $this->originalTrustedProxies);
+        }
     }
 
     // ============================================================================
@@ -53,7 +62,7 @@ final class RateLimitingTest extends TestCase
         $this->assertSame('192.168.1.100', $ip);
     }
 
-    public function testGetClientIpPrefersXForwardedFor(): void
+    public function testGetClientIpIgnoresForwardedHeadersFromUntrustedPeer(): void
     {
         $_SERVER['HTTP_X_FORWARDED_FOR'] = '203.0.113.1, 198.51.100.1';
         $_SERVER['HTTP_X_REAL_IP'] = '203.0.113.2';
@@ -61,14 +70,13 @@ final class RateLimitingTest extends TestCase
         
         $ip = get_client_ip();
         
-        // Should use first IP from X-Forwarded-For
-        $this->assertSame('203.0.113.1', $ip);
+        $this->assertSame('192.168.1.100', $ip);
     }
 
-    public function testGetClientIpFallsBackToXRealIp(): void
+    public function testGetClientIpUsesForwardedForFromExplicitlyTrustedProxy(): void
     {
-        unset($_SERVER['HTTP_X_FORWARDED_FOR']);
-        $_SERVER['HTTP_X_REAL_IP'] = '203.0.113.2';
+        putenv('TRUSTED_PROXIES=192.168.1.100');
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = '203.0.113.2, 192.168.1.100';
         $_SERVER['REMOTE_ADDR'] = '192.168.1.100';
         
         $ip = get_client_ip();
@@ -76,15 +84,15 @@ final class RateLimitingTest extends TestCase
         $this->assertSame('203.0.113.2', $ip);
     }
 
-    public function testGetClientIpRejectsPrivateRangesInProxyHeaders(): void
+    public function testGetClientIpAcceptsPrivateClientAddressFromTrustedProxy(): void
     {
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = '192.168.1.100'; // Private range
+        putenv('TRUSTED_PROXIES=203.0.113.1');
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = '192.168.1.100';
         $_SERVER['REMOTE_ADDR'] = '203.0.113.1';
         
         $ip = get_client_ip();
         
-        // Should fall back to REMOTE_ADDR since private IP was rejected
-        $this->assertSame('203.0.113.1', $ip);
+        $this->assertSame('192.168.1.100', $ip);
     }
 
     public function testGetClientIpReturnsPlaceholderWhenNoIpAvailable(): void

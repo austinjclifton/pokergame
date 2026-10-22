@@ -4,7 +4,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__, 2) . '/bootstrap.php';
 
 setAllowedMethods('POST, OPTIONS');
-apply_auth_rate_limiting(get_client_ip(), 5, 60);
+apply_auth_rate_limiting($pdo, get_client_ip(), 5, 60);
 
 header('Content-Type: application/json; charset=utf-8');
 

@@ -14,6 +14,8 @@ final class CSRFProtectionTest extends TestCase
 {
     private PDO $pdo;
     private bool $inTransaction = false;
+    /** @var array<int, string> */
+    private array $sessionTokens = [];
 
     protected function setUp(): void
     {
@@ -67,7 +69,17 @@ final class CSRFProtectionTest extends TestCase
         require_once __DIR__ . '/../../../app/db/sessions.php';
         $ipHash = hash('sha256', '127.0.0.1');
         $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
-        return \db_insert_session($this->pdo, $userId, $ipHash, 'PHPUnit Test', $expiresAt);
+        $token = generateSessionToken();
+        $sessionId = \db_insert_session(
+            $this->pdo,
+            $userId,
+            $ipHash,
+            'PHPUnit Test',
+            $expiresAt,
+            hashSessionToken($token),
+        );
+        $this->sessionTokens[$sessionId] = $token;
+        return $sessionId;
     }
 
     /**
@@ -253,6 +265,96 @@ final class CSRFProtectionTest extends TestCase
         $this->expectExceptionMessage('CSRF_TOKEN_SESSION_MISMATCH');
         validate_csrf_token($this->pdo, $nonce, $sessionId2);
     }
+
+    public function testValidateCsrfTokenRejectsWrongPurposeWithoutConsumingNonce(): void
+    {
+        $userId = $this->createTestUser('csrf_purpose_user');
+        $sessionId = $this->createTestSession($userId);
+        $nonce = bin2hex(random_bytes(32));
+        db_insert_nonce(
+            $this->pdo,
+            $sessionId,
+            $nonce,
+            gmdate('Y-m-d H:i:s', time() + 900),
+            'logout',
+        );
+
+        try {
+            validate_csrf_token($this->pdo, $nonce, $sessionId, 'challenge');
+            $this->fail('Nonce must not cross operation purposes');
+        } catch (RuntimeException $e) {
+            $this->assertSame('CSRF_TOKEN_INVALID', $e->getMessage());
+        }
+
+        $row = db_get_nonce($this->pdo, $nonce, 'logout');
+        $this->assertNotNull($row);
+        $this->assertNull($row['used_at']);
+    }
+
+    public function testConcurrentConsumersCannotBothUseSameNonce(): void
+    {
+        $userId = $this->createTestUser('csrf_concurrent_user');
+        $sessionId = $this->createTestSession($userId);
+        $nonce = $this->createTestNonce($sessionId);
+
+        $this->pdo->commit();
+        $this->inTransaction = false;
+
+        $worker = tempnam(sys_get_temp_dir(), 'csrf_worker_');
+        $barrier = tempnam(sys_get_temp_dir(), 'csrf_barrier_');
+        unlink($barrier);
+        $backendDir = dirname(__DIR__, 3);
+        $workerSource = <<<'PHP'
+<?php
+declare(strict_types=1);
+require $argv[1] . '/config/db.php';
+require $argv[1] . '/app/db/nonces.php';
+while (!file_exists($argv[4])) {
+    usleep(1000);
+}
+$result = db_consume_nonce($pdo, $argv[2], 'csrf', (int) $argv[3]);
+fwrite(STDOUT, $result ? '1' : '0');
+PHP;
+        file_put_contents($worker, $workerSource);
+
+        $processes = [];
+        try {
+            for ($index = 0; $index < 2; $index++) {
+                $pipes = [];
+                $process = proc_open(
+                    [PHP_BINARY, $worker, $backendDir, $nonce, (string) $sessionId, $barrier],
+                    [
+                        0 => ['file', '/dev/null', 'r'],
+                        1 => ['pipe', 'w'],
+                        2 => ['pipe', 'w'],
+                    ],
+                    $pipes,
+                );
+                $this->assertIsResource($process);
+                $processes[] = [$process, $pipes];
+            }
+
+            touch($barrier);
+            $results = [];
+            foreach ($processes as [$process, $pipes]) {
+                $results[] = trim(stream_get_contents($pipes[1]));
+                fclose($pipes[1]);
+                fclose($pipes[2]);
+                $this->assertSame(0, proc_close($process));
+            }
+            sort($results);
+            $this->assertSame(['0', '1'], $results, 'Exactly one concurrent consumer may use a nonce');
+        } finally {
+            @unlink($worker);
+            @unlink($barrier);
+            $this->pdo->prepare('DELETE FROM csrf_nonces WHERE nonce_hash = :hash')
+                ->execute(['hash' => hash('sha256', $nonce)]);
+            $this->pdo->prepare('DELETE FROM sessions WHERE id = :id')->execute(['id' => $sessionId]);
+            $this->pdo->prepare('DELETE FROM users WHERE id = :id')->execute(['id' => $userId]);
+            $this->pdo->beginTransaction();
+            $this->inTransaction = true;
+        }
+    }
     
     public function testCsrfTokenSessionBinding(): void
     {
@@ -316,30 +418,34 @@ final class CSRFProtectionTest extends TestCase
         $this->assertNotNull($row['used_at'], 'Nonce should be marked as used');
     }
 
-    public function testValidateCsrfTokenWorksWithoutSessionId(): void
+    public function testValidateCsrfTokenRejectsMissingSessionId(): void
     {
         $userId = $this->createTestUser('csrf_user10');
         $sessionId = $this->createTestSession($userId);
         $nonce = $this->createTestNonce($sessionId);
 
-        // Should not throw exception when sessionId is null
-        $this->expectNotToPerformAssertions();
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('CSRF_TOKEN_SESSION_MISMATCH');
         validate_csrf_token($this->pdo, $nonce, null);
     }
 
-    public function testValidateCsrfTokenWithoutSessionIdStillMarksAsUsed(): void
+    public function testValidateCsrfTokenWithoutSessionIdDoesNotConsumeToken(): void
     {
         $userId = $this->createTestUser('csrf_user11');
         $sessionId = $this->createTestSession($userId);
         $nonce = $this->createTestNonce($sessionId);
 
-        // Validate without sessionId (should still mark as used)
-        validate_csrf_token($this->pdo, $nonce, null);
+        try {
+            validate_csrf_token($this->pdo, $nonce, null);
+            $this->fail('A CSRF token must be bound to an explicit session');
+        } catch (RuntimeException $e) {
+            $this->assertSame('CSRF_TOKEN_SESSION_MISMATCH', $e->getMessage());
+        }
 
         // Verify token is marked as used
         require_once __DIR__ . '/../../../app/db/nonces.php';
         $row = \db_get_nonce($this->pdo, $nonce);
-        $this->assertNotNull($row['used_at'], 'Nonce should be marked as used even without sessionId');
+        $this->assertNull($row['used_at'], 'Rejected nonce must remain unused');
     }
 
     // ============================================================================
@@ -409,7 +515,7 @@ final class CSRFProtectionTest extends TestCase
         $sessionId = $this->createTestSession($userId);
 
         // Set up session cookie for nonce_issue()
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $_COOKIE[SESSION_COOKIE_NAME] = $this->sessionTokens[$sessionId];
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
 

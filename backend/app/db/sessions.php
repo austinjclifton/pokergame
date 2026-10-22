@@ -31,7 +31,7 @@ function db_is_session_valid(PDO $pdo, int $sessionId): bool {
         FROM sessions
         WHERE id = :sid
           AND revoked_at IS NULL
-          AND expires_at > NOW()
+          AND expires_at > UTC_TIMESTAMP()
         LIMIT 1
     ");
     $stmt->execute(['sid' => $sessionId]);
@@ -58,20 +58,22 @@ function db_get_session_user_id(PDO $pdo, int $sessionId): ?int {
  * Marks a session as revoked (used on logout or admin action).
  */
 function db_revoke_session(PDO $pdo, int $sessionId): void {
-    $stmt = $pdo->prepare("UPDATE sessions SET revoked_at = NOW() WHERE id = :sid");
+    $stmt = $pdo->prepare("UPDATE sessions SET revoked_at = UTC_TIMESTAMP() WHERE id = :sid");
     $stmt->execute(['sid' => $sessionId]);
 }
 
 /**
  * Insert a new session and return its ID.
  */
-function db_insert_session(PDO $pdo, int $userId, string $ipHash, string $userAgent, string $expiresAt): int {
+function db_insert_session(PDO $pdo, int $userId, string $ipHash, string $userAgent, string $expiresAt, ?string $tokenHash = null): int {
+    $tokenHash ??= hash('sha256', random_bytes(32));
     $stmt = $pdo->prepare("
-        INSERT INTO sessions (user_id, expires_at, ip_hash, user_agent)
-        VALUES (:uid, :exp, :ip, :ua)
+        INSERT INTO sessions (user_id, token_hash, rotated_at, expires_at, ip_hash, user_agent)
+        VALUES (:uid, :token_hash, UTC_TIMESTAMP(), :exp, :ip, :ua)
     ");
     $stmt->execute([
         'uid' => $userId,
+        'token_hash' => $tokenHash,
         'exp' => $expiresAt,
         'ip'  => $ipHash,
         'ua'  => $userAgent,
@@ -83,12 +85,14 @@ function db_insert_session(PDO $pdo, int $userId, string $ipHash, string $userAg
  * Insert a temporary session (for unauthenticated users) and return its ID.
  * Temporary sessions have NULL user_id and are used for CSRF nonce issuance.
  */
-function db_insert_temporary_session(PDO $pdo, string $ipHash, string $userAgent, string $expiresAt): int {
+function db_insert_temporary_session(PDO $pdo, string $ipHash, string $userAgent, string $expiresAt, ?string $tokenHash = null): int {
+    $tokenHash ??= hash('sha256', random_bytes(32));
     $stmt = $pdo->prepare("
-        INSERT INTO sessions (user_id, expires_at, ip_hash, user_agent)
-        VALUES (NULL, :exp, :ip, :ua)
+        INSERT INTO sessions (user_id, token_hash, rotated_at, expires_at, ip_hash, user_agent)
+        VALUES (NULL, :token_hash, UTC_TIMESTAMP(), :exp, :ip, :ua)
     ");
     $stmt->execute([
+        'token_hash' => $tokenHash,
         'exp' => $expiresAt,
         'ip'  => $ipHash,
         'ua'  => $userAgent,
@@ -101,16 +105,37 @@ function db_insert_temporary_session(PDO $pdo, string $ipHash, string $userAgent
  */
 function db_get_session_with_user(PDO $pdo, int $sessionId): ?array {
     $stmt = $pdo->prepare("
-        SELECT u.id AS user_id, u.username, u.email,
-               s.id AS session_id, s.expires_at, s.ip_hash, s.user_agent
+        SELECT u.id AS user_id, u.username, u.email, u.is_admin,
+               s.id AS session_id, s.expires_at, s.rotated_at, s.ip_hash, s.user_agent
         FROM sessions s
         JOIN users u ON u.id = s.user_id
         WHERE s.id = :sid
           AND s.revoked_at IS NULL
-          AND s.expires_at > NOW()
+          AND s.expires_at > UTC_TIMESTAMP()
         LIMIT 1
     ");
     $stmt->execute(['sid' => $sessionId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row ?: null;
+}
+
+/**
+ * Resolve an active session by the SHA-256 hash of its opaque cookie token.
+ * Temporary sessions are returned with NULL user fields so registration
+ * nonces can remain bound to the browser that requested them.
+ */
+function db_get_session_by_token_hash(PDO $pdo, string $tokenHash): ?array {
+    $stmt = $pdo->prepare("
+        SELECT s.id AS session_id, s.user_id, s.expires_at, s.rotated_at,
+               s.ip_hash, s.user_agent, u.username, u.email, u.is_admin
+        FROM sessions s
+        LEFT JOIN users u ON u.id = s.user_id
+        WHERE s.token_hash = :token_hash
+          AND s.revoked_at IS NULL
+          AND s.expires_at > UTC_TIMESTAMP()
+        LIMIT 1
+    ");
+    $stmt->execute(['token_hash' => $tokenHash]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     return $row ?: null;
 }
@@ -121,17 +146,36 @@ function db_get_session_with_user(PDO $pdo, int $sessionId): ?array {
 function db_touch_session(PDO $pdo, int $sessionId, int $days): void {
     $stmt = $pdo->prepare("
         UPDATE sessions
-        SET expires_at = DATE_ADD(NOW(), INTERVAL :days DAY)
+        SET expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL :days DAY)
         WHERE id = :sid
           AND revoked_at IS NULL
     ");
     $stmt->execute(['sid' => $sessionId, 'days' => $days]);
 }
 
+/** Rotate the public bearer token and renew the expiry atomically. */
+function db_rotate_session_token(PDO $pdo, int $sessionId, string $tokenHash, int $days): bool {
+    $stmt = $pdo->prepare("
+        UPDATE sessions
+        SET token_hash = :token_hash,
+            rotated_at = UTC_TIMESTAMP(),
+            expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL :days DAY)
+        WHERE id = :sid
+          AND revoked_at IS NULL
+          AND expires_at > UTC_TIMESTAMP()
+    ");
+    $stmt->execute([
+        'token_hash' => $tokenHash,
+        'days' => $days,
+        'sid' => $sessionId,
+    ]);
+    return $stmt->rowCount() === 1;
+}
+
 /**
  * Revoke all sessions for a user.
  */
 function db_revoke_all_user_sessions(PDO $pdo, int $userId): void {
-    $stmt = $pdo->prepare("UPDATE sessions SET revoked_at = NOW() WHERE user_id = :uid");
+    $stmt = $pdo->prepare("UPDATE sessions SET revoked_at = UTC_TIMESTAMP() WHERE user_id = :uid");
     $stmt->execute(['uid' => $userId]);
 }

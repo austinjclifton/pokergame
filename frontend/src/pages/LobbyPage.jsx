@@ -309,7 +309,7 @@ export default function LobbyPage({ user, onLogout }) {
   const handleLogout = async () => {
     try {
       // Fetch CSRF token before logout
-      const token = await fetchCsrfToken();
+      const token = await fetchCsrfToken("logout");
 
       socketRef.current?.send(JSON.stringify({ type: "logout" }));
       socketRef.current?.close(1000, "User logout");

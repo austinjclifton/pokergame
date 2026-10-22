@@ -35,3 +35,7 @@ Additional prerequisites and test-database instructions are documented in
 state format are recorded in
 [`docs/websocket-protocol.md`](docs/websocket-protocol.md) and
 [`docs/game-snapshot-format.md`](docs/game-snapshot-format.md).
+
+The opaque-session, WebSocket-token, proxy, nonce, throttle, and administrator
+security model is documented in
+[`docs/authentication-security.md`](docs/authentication-security.md).

@@ -15,6 +15,7 @@ CREATE TABLE users (
   username VARCHAR(50) NOT NULL UNIQUE,
   email VARCHAR(255) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
+  is_admin BOOLEAN NOT NULL DEFAULT FALSE,
   verified_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_login_at DATETIME NULL
@@ -23,11 +24,12 @@ CREATE TABLE users (
 CREATE TABLE sessions (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NULL COMMENT 'NULL allows temporary sessions (e.g., for CSRF)',
+  token_hash CHAR(64) NOT NULL UNIQUE,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  rotated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   expires_at DATETIME NOT NULL,
   ip_hash CHAR(64) NOT NULL,
   user_agent VARCHAR(255) NOT NULL,
-  refresh_token CHAR(64) UNIQUE,
   revoked_at DATETIME NULL,
   INDEX (user_id),
   INDEX (expires_at),
@@ -37,23 +39,34 @@ CREATE TABLE sessions (
 CREATE TABLE csrf_nonces (
   id INT AUTO_INCREMENT PRIMARY KEY,
   session_id INT NOT NULL,
-  nonce CHAR(64) NOT NULL UNIQUE,
+  nonce_hash CHAR(64) NOT NULL UNIQUE,
+  purpose VARCHAR(32) NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   expires_at DATETIME NOT NULL,
   used_at DATETIME NULL,
-  INDEX (session_id, used_at),
+  INDEX (session_id, purpose, used_at),
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE password_resets (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL,
-  token CHAR(64) NOT NULL UNIQUE,
+  token_hash CHAR(64) NOT NULL UNIQUE,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   expires_at DATETIME NOT NULL,
   used_at DATETIME NULL,
   INDEX (user_id),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE auth_rate_limits (
+  key_hash CHAR(64) PRIMARY KEY,
+  window_started_at DATETIME NOT NULL,
+  request_count INT UNSIGNED NOT NULL,
+  blocked_until DATETIME NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX (blocked_until),
+  INDEX (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ================================

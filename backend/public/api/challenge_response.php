@@ -41,7 +41,7 @@ try {
 	}
 
 	try {
-		validate_csrf_token($pdo, $token, (int) $user['session_id']);
+		validate_csrf_token($pdo, $token, (int) $user['session_id'], 'challenge_response');
 	} catch (RuntimeException $e) {
 		$errorMsg = match ($e->getMessage()) {
 			'CSRF_TOKEN_MISSING' => 'Missing CSRF token',

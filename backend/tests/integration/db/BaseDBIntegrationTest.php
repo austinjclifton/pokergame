@@ -217,7 +217,8 @@ abstract class BaseDBIntegrationTest extends TestCase
         $idValue,
         string $idColumn = 'id',
         int $toleranceSeconds = 60,
-        string $message = ''
+        string $message = '',
+        bool $utc = false,
     ): void {
         // Validate table and column names to prevent SQL injection
         // Only allow alphanumeric, underscores, and hyphens
@@ -231,8 +232,9 @@ abstract class BaseDBIntegrationTest extends TestCase
             throw new InvalidArgumentException("Invalid id column name: {$idColumn}");
         }
         
+        $clock = $utc ? 'UTC_TIMESTAMP()' : 'NOW()';
         $stmt = $this->pdo->prepare("
-            SELECT TIMESTAMPDIFF(SECOND, `{$column}`, NOW()) as seconds_ago
+            SELECT TIMESTAMPDIFF(SECOND, `{$column}`, {$clock}) as seconds_ago
             FROM `{$table}`
             WHERE `{$idColumn}` = :id
         ");

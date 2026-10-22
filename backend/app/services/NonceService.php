@@ -14,16 +14,18 @@ require_once __DIR__ . '/../../lib/session.php';
  * If no session exists, creates a temporary session for unauthenticated users.
  * Returns ['nonce' => ..., 'expiresAt' => ...].
  */
-function nonce_issue(PDO $pdo, int $ttlMinutes = 15): array {
-    $now = new DateTime();
-    $expiresAt = (clone $now)->modify("+{$ttlMinutes} minutes")->format('Y-m-d H:i:s');
+function nonce_issue(PDO $pdo, int $ttlMinutes = 15, string $purpose = 'csrf'): array {
+    if (!preg_match('/^[a-z][a-z0-9_-]{1,31}$/D', $purpose)) {
+        throw new InvalidArgumentException('Invalid nonce purpose');
+    }
+    $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    $expiresAt = $now->modify("+{$ttlMinutes} minutes")->format('Y-m-d H:i:s');
 
     // Try existing session
-    $user = requireSession($pdo);
-    $sessionId = null;
+    $session = currentSession($pdo, false);
 
-    if ($user && isset($user['session_id'])) {
-        $sessionId = (int)$user['session_id'];
+    if ($session && isset($session['session_id'])) {
+        $sessionId = (int)$session['session_id'];
     } else {
         // Create temporary session for unauthenticated clients (e.g., registration)
         $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
@@ -33,7 +35,7 @@ function nonce_issue(PDO $pdo, int $ttlMinutes = 15): array {
 
     // Generate random nonce (256-bit entropy)
     $nonce = bin2hex(random_bytes(32));
-    db_insert_nonce($pdo, $sessionId, $nonce, $expiresAt);
+    db_insert_nonce($pdo, $sessionId, $nonce, $expiresAt, $purpose);
 
     return [
         'nonce' => $nonce,

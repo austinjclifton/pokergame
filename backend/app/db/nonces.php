@@ -22,14 +22,15 @@ declare(strict_types=1);
  *     used_at DATETIME NULL
  *   )
  */
-function db_insert_nonce(PDO $pdo, int $sessionId, string $nonce, string $expiresAt): int {
+function db_insert_nonce(PDO $pdo, int $sessionId, string $nonce, string $expiresAt, string $purpose = 'csrf'): int {
     $stmt = $pdo->prepare(
-        "INSERT INTO csrf_nonces (session_id, nonce, created_at, expires_at)
-         VALUES (:sid, :nonce, NOW(), :exp)"
+        "INSERT INTO csrf_nonces (session_id, nonce_hash, purpose, created_at, expires_at)
+         VALUES (:sid, :nonce_hash, :purpose, UTC_TIMESTAMP(), :exp)"
     );
     $stmt->execute([
         ':sid'   => $sessionId,
-        ':nonce' => $nonce,
+        ':nonce_hash' => hash('sha256', $nonce),
+        ':purpose' => $purpose,
         ':exp'   => $expiresAt,
     ]);
     return (int)$pdo->lastInsertId();
@@ -39,14 +40,14 @@ function db_insert_nonce(PDO $pdo, int $sessionId, string $nonce, string $expire
  * Fetch a nonce row (for general CSRF flows).
  * Returns: ['id','session_id','expires_at','used_at'] or null.
  */
-function db_get_nonce(PDO $pdo, string $nonce): ?array {
+function db_get_nonce(PDO $pdo, string $nonce, string $purpose = 'csrf'): ?array {
     $stmt = $pdo->prepare(
         "SELECT id, session_id, expires_at, used_at
            FROM csrf_nonces
-          WHERE nonce = :n
+          WHERE nonce_hash = :n AND purpose = :purpose
           LIMIT 1"
     );
-    $stmt->execute([':n' => $nonce]);
+    $stmt->execute([':n' => hash('sha256', $nonce), ':purpose' => $purpose]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     return $row ?: null;
 }
@@ -57,10 +58,70 @@ function db_get_nonce(PDO $pdo, string $nonce): ?array {
 function db_mark_nonce_used(PDO $pdo, int $nonceId): void {
     $stmt = $pdo->prepare(
         "UPDATE csrf_nonces
-            SET used_at = NOW()
+            SET used_at = UTC_TIMESTAMP()
           WHERE id = :id AND used_at IS NULL"
     );
     $stmt->execute([':id' => $nonceId]);
+}
+
+/**
+ * Atomically consume a purpose- and session-bound nonce.
+ * Returns the consumed row, or null when any condition is not satisfied.
+ */
+function db_consume_nonce(PDO $pdo, string $nonce, string $purpose, int $sessionId): ?array {
+    if ($nonce === '' || $purpose === '' || $sessionId <= 0) {
+        return null;
+    }
+
+    $ownsTransaction = !$pdo->inTransaction();
+    if ($ownsTransaction) {
+        $pdo->beginTransaction();
+    }
+    try {
+        $select = $pdo->prepare(
+            "SELECT n.id, n.session_id, n.expires_at, n.used_at
+             FROM csrf_nonces n
+             JOIN sessions s ON s.id = n.session_id
+             WHERE n.nonce_hash = :nonce_hash
+               AND n.purpose = :purpose
+               AND n.session_id = :session_id
+               AND n.used_at IS NULL
+               AND n.expires_at > UTC_TIMESTAMP()
+               AND s.revoked_at IS NULL
+               AND s.expires_at > UTC_TIMESTAMP()
+             FOR UPDATE"
+        );
+        $select->execute([
+            'nonce_hash' => hash('sha256', $nonce),
+            'purpose' => $purpose,
+            'session_id' => $sessionId,
+        ]);
+        $row = $select->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            if ($ownsTransaction) {
+                $pdo->rollBack();
+            }
+            return null;
+        }
+
+        $update = $pdo->prepare('UPDATE csrf_nonces SET used_at = UTC_TIMESTAMP() WHERE id = :id AND used_at IS NULL');
+        $update->execute(['id' => (int) $row['id']]);
+        if ($update->rowCount() !== 1) {
+            if ($ownsTransaction) {
+                $pdo->rollBack();
+            }
+            return null;
+        }
+        if ($ownsTransaction) {
+            $pdo->commit();
+        }
+        return $row;
+    } catch (Throwable $e) {
+        if ($ownsTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
 }
 
 /* =============================================================================
@@ -71,9 +132,8 @@ function db_mark_nonce_used(PDO $pdo, int $nonceId): void {
  * Create a short-lived nonce (ws token) for WebSocket authentication.
  *
  * SECURITY NOTES:
- * - The token is random (128-bit hex) and expires after $ttlSeconds.
- * - We *do not* distinguish rows by "type"; instead, WS code treats these
- *   tokens as single-use regardless, based on "used_at" + "expires_at".
+ * - The token is random (256-bit hex) and expires after $ttlSeconds.
+ * - Only its SHA-256 hash is persisted and its purpose is explicit.
  *
  * Returns the generated token string.
  */
@@ -86,18 +146,17 @@ function db_create_ws_nonce(PDO $pdo, int $sessionId, int $ttlSeconds = 30): str
         throw new InvalidArgumentException('ttlSeconds out of bounds');
     }
 
-    // 128-bit token (32 hex chars). You can bump to 256-bit if desired.
-    $token = bin2hex(random_bytes(16));
+    $token = bin2hex(random_bytes(32));
 
     // NOTE: With PDO and MySQL, binding inside INTERVAL is tricky if you try named params.
     // Use positional binding with DATE_ADD; MySQL allows an expression for the interval value.
     $stmt = $pdo->prepare(
-        "INSERT INTO csrf_nonces (session_id, nonce, created_at, expires_at)
-         VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? SECOND))"
+        "INSERT INTO csrf_nonces (session_id, nonce_hash, purpose, created_at, expires_at)
+         VALUES (?, ?, 'websocket', UTC_TIMESTAMP(), DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? SECOND))"
     );
     // Bind as ints/strings explicitly
     $stmt->bindValue(1, $sessionId, PDO::PARAM_INT);
-    $stmt->bindValue(2, $token, PDO::PARAM_STR);
+    $stmt->bindValue(2, hash('sha256', $token), PDO::PARAM_STR);
     $stmt->bindValue(3, $ttlSeconds, PDO::PARAM_INT);
     $stmt->execute();
 
@@ -142,10 +201,11 @@ function db_consume_ws_nonce(PDO $pdo, string $token): ?array {
                FROM csrf_nonces n
                JOIN sessions s ON s.id = n.session_id
                JOIN users    u ON u.id = s.user_id
-              WHERE n.nonce = :t
+              WHERE n.nonce_hash = :t
+                AND n.purpose = 'websocket'
               FOR UPDATE"
         );
-        $sel->execute([':t' => $token]);
+        $sel->execute([':t' => hash('sha256', $token)]);
         $row = $sel->fetch(PDO::FETCH_ASSOC);
 
         if (!$row) {
@@ -156,10 +216,10 @@ function db_consume_ws_nonce(PDO $pdo, string $token): ?array {
         // Basic validity checks - use MySQL time comparison directly
         $validityCheck = $pdo->prepare(
             "SELECT 
-                CASE WHEN n.expires_at <= NOW() THEN 1 ELSE 0 END as nonce_expired,
+                CASE WHEN n.expires_at <= UTC_TIMESTAMP() THEN 1 ELSE 0 END as nonce_expired,
                 CASE WHEN n.used_at IS NOT NULL THEN 1 ELSE 0 END as nonce_used,
                 CASE WHEN s.revoked_at IS NOT NULL THEN 1 ELSE 0 END as sess_revoked,
-                CASE WHEN s.expires_at <= NOW() THEN 1 ELSE 0 END as sess_expired
+                CASE WHEN s.expires_at <= UTC_TIMESTAMP() THEN 1 ELSE 0 END as sess_expired
              FROM csrf_nonces n
              JOIN sessions s ON s.id = n.session_id
              WHERE n.id = :id"
@@ -178,7 +238,7 @@ function db_consume_ws_nonce(PDO $pdo, string $token): ?array {
         }
 
         // Mark as used (single-use)
-        $upd = $pdo->prepare("UPDATE csrf_nonces SET used_at = NOW() WHERE id = :id AND used_at IS NULL");
+        $upd = $pdo->prepare("UPDATE csrf_nonces SET used_at = UTC_TIMESTAMP() WHERE id = :id AND used_at IS NULL");
         $upd->execute([':id' => (int)$row['nonce_id']]);
 
         $pdo->commit();
@@ -208,12 +268,12 @@ function db_consume_ws_nonce(PDO $pdo, string $token): ?array {
  */
 function db_get_nonce_for_ws(PDO $pdo, string $token): ?array {
     $stmt = $pdo->prepare(
-        "SELECT id, session_id, nonce, created_at, expires_at, used_at
+        "SELECT id, session_id, nonce_hash, purpose, created_at, expires_at, used_at
            FROM csrf_nonces
-          WHERE nonce = :t
+          WHERE nonce_hash = :t AND purpose = 'websocket'
           LIMIT 1"
     );
-    $stmt->execute([':t' => $token]);
+    $stmt->execute([':t' => hash('sha256', $token)]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     return $row ?: null;
 }
@@ -222,6 +282,6 @@ function db_get_nonce_for_ws(PDO $pdo, string $token): ?array {
  * Mark a nonce as consumed by id (idempotent).
  */
 function db_mark_nonce_consumed(PDO $pdo, int $nonceId): void {
-    $stmt = $pdo->prepare("UPDATE csrf_nonces SET used_at = NOW() WHERE id = :id AND used_at IS NULL");
+    $stmt = $pdo->prepare("UPDATE csrf_nonces SET used_at = UTC_TIMESTAMP() WHERE id = :id AND used_at IS NULL");
     $stmt->execute([':id' => $nonceId]);
 }

@@ -34,7 +34,7 @@ function auth_login_user(PDO $pdo, string $username, string $password): array {
     }
 
     // Create session
-    $ip = $_SERVER['REMOTE_ADDR']     ?? 'unknown';
+    $ip = get_client_ip();
     $ua = $_SERVER['HTTP_USER_AGENT'] ?? 'unknown';
     $sessionId = createSession($pdo, (int)$user['id'], $ip, $ua);
 
@@ -84,8 +84,8 @@ function auth_logout_user(PDO $pdo): bool {
     
     $revoked = revokeSession($pdo);
 
-    if ($revoked && !empty($_COOKIE['session_id'])) {
-        $sid = (int) $_COOKIE['session_id'];
+    if ($revoked && $session) {
+        $sid = (int) $session['session_id'];
 
         // Remove from presence table completely
         db_remove_presence_by_session($pdo, $sid);
@@ -95,7 +95,7 @@ function auth_logout_user(PDO $pdo): bool {
             AuditService::safeLog($pdo, [
                 'user_id' => (int)$session['user_id'],
                 'session_id' => $sid,
-                'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
+                'ip_address' => get_client_ip(),
                 'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
                 'action' => 'user.logout',
                 'entity_type' => 'user',
@@ -142,14 +142,14 @@ function auth_register_user(PDO $pdo, string $username, string $email, string $p
         throw new RuntimeException('INVALID_PASSWORD: ' . $passwordValidation['error']);
     }
     
-    $row = db_get_nonce($pdo, $nonce);
-    if (!$row || $row['used_at'] !== null || strtotime($row['expires_at']) < time()) {
-        throw new RuntimeException('INVALID_NONCE');
-    }
-    db_mark_nonce_used($pdo, (int)$row['id']);
-
-    if (!db_is_session_valid($pdo, (int)$row['session_id'])) {
+    $temporarySession = currentSession($pdo, false);
+    if (!$temporarySession) {
         throw new RuntimeException('NONCE_SESSION_INVALID');
+    }
+    $temporarySessionId = (int) $temporarySession['session_id'];
+    $row = db_consume_nonce($pdo, $nonce, 'register', $temporarySessionId);
+    if (!$row) {
+        throw new RuntimeException('INVALID_NONCE');
     }
 
     // Check if user exists using canonical values
@@ -177,9 +177,10 @@ function auth_register_user(PDO $pdo, string $username, string $email, string $p
     }
 
     // Create session for new user
-    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $ip = get_client_ip();
     $ua = $_SERVER['HTTP_USER_AGENT'] ?? 'unknown';
     $sessionId = createSession($pdo, $userId, $ip, $ua);
+    db_revoke_session($pdo, $temporarySessionId);
 
     AuditService::safeLog($pdo, [
         'user_id' => $userId,
@@ -232,5 +233,6 @@ function auth_require_session(PDO $pdo): array {
         'username'   => $session['username'],
         'email'      => $session['email'],
         'session_id' => (int)$session['session_id'],
+        'is_admin' => (bool) ($session['is_admin'] ?? false),
     ];
 }

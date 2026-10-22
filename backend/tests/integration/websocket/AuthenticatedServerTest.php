@@ -150,9 +150,12 @@ final class AuthenticatedServerTest extends TestCase
     /**
      * @param array<string, string> $cookies
      */
-    private function createRequest(string $queryString = '', array $cookies = []): WebSocketTestRequest
+    private function createRequest(string $queryString = '', array $cookies = [], ?string $origin = 'http://localhost:5173'): WebSocketTestRequest
     {
         $headers = [];
+        if ($origin !== null) {
+            $headers['Origin'] = [$origin];
+        }
         if ($cookies !== []) {
             $pairs = [];
             foreach ($cookies as $name => $value) {
@@ -239,7 +242,7 @@ final class AuthenticatedServerTest extends TestCase
             $this->assertSame($user['id'], $conn->userCtx['user_id'] ?? null);
             $this->assertSame($user['username'], $conn->userCtx['username'] ?? null);
             $this->assertSame($sessionId, $conn->userCtx['session_id'] ?? null);
-            $this->assertSame($token, $conn->userCtx['token'] ?? null);
+            $this->assertArrayNotHasKey('token', $conn->userCtx);
             $this->assertSame('generic', $conn->userCtx['channel'] ?? null);
             $this->assertSame(['onOpen', 'onAuthenticated'], $this->inner->eventNames());
         });
@@ -285,7 +288,7 @@ final class AuthenticatedServerTest extends TestCase
         });
     }
 
-    public function testOnOpenAcceptsValidSessionCookieForNonGameChannel(): void
+    public function testOnOpenRejectsValidSessionCookieForLobbyChannel(): void
     {
         $user = $this->createTestUser('cookie_user');
         $sessionId = $this->createTestSession($user['id']);
@@ -293,12 +296,9 @@ final class AuthenticatedServerTest extends TestCase
 
         $this->authenticatedServer->onOpen($conn);
 
-        $this->assertFalse($conn->isClosed);
-        $this->assertSame($user['id'], $conn->userCtx['user_id'] ?? null);
-        $this->assertSame($user['username'], $conn->userCtx['username'] ?? null);
-        $this->assertSame($sessionId, $conn->userCtx['session_id'] ?? null);
-        $this->assertSame('', $conn->userCtx['token'] ?? null);
-        $this->assertSame(['onOpen', 'onAuthenticated'], $this->inner->eventNames());
+        $this->assertTrue($conn->isClosed);
+        $this->assertLastError($conn, 'unauthorized');
+        $this->assertSame([], $this->inner->eventNames());
     }
 
     public function testOnOpenRejectsSessionCookieForGameChannel(): void
@@ -333,10 +333,11 @@ final class AuthenticatedServerTest extends TestCase
     {
         $user = $this->createTestUser('expired_session_user');
         $stmt = $this->pdo->prepare(
-            'INSERT INTO sessions (user_id, expires_at, ip_hash, user_agent) VALUES (:uid, DATE_SUB(NOW(), INTERVAL 2 DAY), :ip, :ua)'
+            'INSERT INTO sessions (user_id, token_hash, expires_at, ip_hash, user_agent) VALUES (:uid, :token_hash, DATE_SUB(NOW(), INTERVAL 2 DAY), :ip, :ua)'
         );
         $stmt->execute([
             'uid' => $user['id'],
+            'token_hash' => hash('sha256', random_bytes(32)),
             'ip' => hash('sha256', '127.0.0.1'),
             'ua' => 'AuthenticatedServerTest',
         ]);
@@ -369,6 +370,27 @@ final class AuthenticatedServerTest extends TestCase
         });
     }
 
+    public function testOnOpenRejectsMissingOrSpoofedOriginWithoutConsumingToken(): void
+    {
+        $user = $this->createTestUser('origin_user');
+        $sessionId = $this->createTestSession($user['id']);
+
+        $this->withCommittedState(function () use ($sessionId): void {
+            $token = $this->createWsToken($sessionId);
+            $missing = $this->createConnection($this->createRequest('token=' . $token, [], null));
+            $this->authenticatedServer->onOpen($missing);
+            $this->assertTrue($missing->isClosed);
+
+            $spoofed = $this->createConnection($this->createRequest('token=' . $token, [], 'https://evil.example'));
+            $this->authenticatedServer->onOpen($spoofed);
+            $this->assertTrue($spoofed->isClosed);
+
+            $allowed = $this->createConnection($this->createRequest('token=' . $token));
+            $this->authenticatedServer->onOpen($allowed);
+            $this->assertFalse($allowed->isClosed, 'Origin rejection must occur before token consumption');
+        });
+    }
+
     public function testOnOpenSendsServerErrorWhenRequestParsingThrows(): void
     {
         $uri = $this->createStub(UriInterface::class);
@@ -376,6 +398,7 @@ final class AuthenticatedServerTest extends TestCase
 
         $request = $this->createStub(RequestInterface::class);
         $request->method('getUri')->willReturn($uri);
+        $request->method('getHeader')->willReturnMap([['Origin', ['http://localhost:5173']]]);
 
         $conn = $this->createConnection($request);
         $this->authenticatedServer->onOpen($conn);
@@ -434,8 +457,10 @@ final class AuthenticatedServerTest extends TestCase
 
     public function testOnMessageForwardsAuthenticatedMessages(): void
     {
+        $user = $this->createTestUser('message_user');
+        $sessionId = $this->createTestSession($user['id']);
         $conn = $this->createConnection();
-        $conn->userCtx = ['user_id' => 123, 'session_id' => 456];
+        $conn->userCtx = ['user_id' => $user['id'], 'session_id' => $sessionId];
 
         $this->authenticatedServer->onMessage($conn, '{"type":"ping"}');
 
@@ -446,8 +471,10 @@ final class AuthenticatedServerTest extends TestCase
 
     public function testOnMessageSwallowsInnerExceptions(): void
     {
+        $user = $this->createTestUser('message_error_user');
+        $sessionId = $this->createTestSession($user['id']);
         $conn = $this->createConnection();
-        $conn->userCtx = ['user_id' => 123, 'session_id' => 456];
+        $conn->userCtx = ['user_id' => $user['id'], 'session_id' => $sessionId];
         $this->inner->messageException = new RuntimeException('inner message failed');
 
         $this->authenticatedServer->onMessage($conn, '{"type":"ping"}');
@@ -455,6 +482,21 @@ final class AuthenticatedServerTest extends TestCase
         $this->assertFalse($conn->isClosed);
         $this->assertSame([], $conn->sentMessages);
         $this->assertSame(['onMessage'], $this->inner->eventNames());
+    }
+
+    public function testOnMessageRejectsConnectionAfterSessionRevocation(): void
+    {
+        $user = $this->createTestUser('revoked_message_user');
+        $sessionId = $this->createTestSession($user['id']);
+        $conn = $this->createConnection();
+        $conn->userCtx = ['user_id' => $user['id'], 'session_id' => $sessionId];
+        db_revoke_session($this->pdo, $sessionId);
+
+        $this->authenticatedServer->onMessage($conn, '{"type":"ping"}');
+
+        $this->assertTrue($conn->isClosed);
+        $this->assertLastError($conn, 'unauthorized');
+        $this->assertSame([], $this->inner->eventNames());
     }
 
     public function testOnCloseOnlyDelegatesWhenUserCtxExists(): void

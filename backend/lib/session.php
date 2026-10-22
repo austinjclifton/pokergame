@@ -1,117 +1,167 @@
 <?php
-// backend/lib/session.php
-// -----------------------------------------------------------------------------
-// Session lifecycle management (no direct SQL).
-// Uses /app/db/sessions.php for persistence.
-// -----------------------------------------------------------------------------
+// Opaque, server-stored session lifecycle management.
+
+declare(strict_types=1);
 
 require_once __DIR__ . '/../app/db/sessions.php';
 
+const SESSION_COOKIE_NAME = 'session_token';
 const SESSION_TTL_DAYS = 7;
+const SESSION_ROTATE_HOURS = 24;
 const SESSION_TOUCH_HOURS = 12;
 
 function sessionCookieIsSecure(): bool
 {
+    if (function_exists('request_is_https')) {
+        return request_is_https();
+    }
     $https = strtolower((string) ($_SERVER['HTTPS'] ?? ''));
     return $https !== '' && $https !== 'off' && $https !== '0';
 }
 
-function createSession(PDO $pdo, int $userId, string $ip, string $userAgent): int {
-    $ipHash  = hash('sha256', $ip);
-    $expires = (new DateTime())->modify('+' . SESSION_TTL_DAYS . ' days')->format('Y-m-d H:i:s');
+function sessionClientIp(): string
+{
+    return function_exists('get_client_ip')
+        ? get_client_ip()
+        : (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+}
 
-    $sessionId = db_insert_session($pdo, $userId, $ipHash, substr($userAgent, 0, 255), $expires);
+function generateSessionToken(): string
+{
+    return bin2hex(random_bytes(32));
+}
 
-    setcookie('session_id', $sessionId, [
-        'expires'  => time() + (SESSION_TTL_DAYS * 86400),
-        'path'     => '/',
-        'secure'   => sessionCookieIsSecure(),
+function hashSessionToken(string $token): string
+{
+    return hash('sha256', $token);
+}
+
+function setSessionCookie(string $token, int $expires): void
+{
+    setcookie(SESSION_COOKIE_NAME, $token, [
+        'expires' => $expires,
+        'path' => '/',
+        'secure' => sessionCookieIsSecure(),
         'httponly' => true,
         'samesite' => 'Lax',
     ]);
-
-    return $sessionId;
 }
 
-/**
- * Create a temporary session for unauthenticated users (e.g., for CSRF nonce issuance).
- * Temporary sessions have NULL user_id.
- */
-function createTemporarySession(PDO $pdo, string $ip, string $userAgent): int {
-    $ipHash  = hash('sha256', $ip);
-    $expires = (new DateTime())->modify('+' . SESSION_TTL_DAYS . ' days')->format('Y-m-d H:i:s');
-
-    $sessionId = db_insert_temporary_session($pdo, $ipHash, substr($userAgent, 0, 255), $expires);
-
-    setcookie('session_id', $sessionId, [
-        'expires'  => time() + (SESSION_TTL_DAYS * 86400),
-        'path'     => '/',
-        'secure'   => sessionCookieIsSecure(),
+function clearSessionCookies(): void
+{
+    $options = [
+        'expires' => time() - 3600,
+        'path' => '/',
+        'secure' => sessionCookieIsSecure(),
         'httponly' => true,
         'samesite' => 'Lax',
-    ]);
+    ];
+    setcookie(SESSION_COOKIE_NAME, '', $options);
+    // Remove the obsolete predictable cookie without accepting it.
+    setcookie('session_id', '', $options);
+}
 
+function createSession(PDO $pdo, int $userId, string $ip, string $userAgent): int
+{
+    $token = generateSessionToken();
+    $expires = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+' . SESSION_TTL_DAYS . ' days');
+    $sessionId = db_insert_session(
+        $pdo,
+        $userId,
+        hash('sha256', $ip),
+        substr($userAgent, 0, 255),
+        $expires->format('Y-m-d H:i:s'),
+        hashSessionToken($token),
+    );
+    setSessionCookie($token, $expires->getTimestamp());
     return $sessionId;
 }
 
-/**
- * Validates and returns the active session's user.
- * Returns an associative array:
- * [
- *   'user_id'    => int,
- *   'username'   => string,
- *   'email'      => string,
- *   'session_id' => int  // numeric ID from sessions.id (for FK use)
- * ]
- */
-function requireSession(PDO $pdo): ?array {
-    $sid = isset($_COOKIE['session_id']) ? (int)$_COOKIE['session_id'] : 0;
-    if ($sid <= 0) return null;
+function createTemporarySession(PDO $pdo, string $ip, string $userAgent): int
+{
+    $token = generateSessionToken();
+    $expires = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+' . SESSION_TTL_DAYS . ' days');
+    $sessionId = db_insert_temporary_session(
+        $pdo,
+        hash('sha256', $ip),
+        substr($userAgent, 0, 255),
+        $expires->format('Y-m-d H:i:s'),
+        hashSessionToken($token),
+    );
+    setSessionCookie($token, $expires->getTimestamp());
+    return $sessionId;
+}
 
-    $row = db_get_session_with_user($pdo, $sid);
-    if (!$row) return null;
-
-    $currentIpHash = hash('sha256', $_SERVER['REMOTE_ADDR'] ?? '');
-    $currentUA = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
-
-    if (!hash_equals($row['ip_hash'], $currentIpHash)) return null;
-    if (strncmp($row['user_agent'], $currentUA, 60) !== 0) return null;
-
-    // Extend session if nearing expiry
-    if (strtotime($row['expires_at']) - time() < SESSION_TOUCH_HOURS * 3600) {
-        db_touch_session($pdo, $sid, SESSION_TTL_DAYS);
+/** Resolve the current cookie to an internal session row. */
+function currentSession(PDO $pdo, bool $requireUser = true): ?array
+{
+    $token = (string) ($_COOKIE[SESSION_COOKIE_NAME] ?? '');
+    if (!preg_match('/^[a-f0-9]{64}$/D', $token)) {
+        return null;
     }
 
-    // Return unified structure with numeric session_id
+    $row = db_get_session_by_token_hash($pdo, hashSessionToken($token));
+    if (!$row || ($requireUser && (empty($row['user_id']) || $row['username'] === null))) {
+        return null;
+    }
+
+    $currentUa = substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
+    if (strncmp((string) $row['user_agent'], $currentUa, 60) !== 0) {
+        return null;
+    }
+
+    $utc = new DateTimeZone('UTC');
+    $expiresAt = DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', (string) $row['expires_at'], $utc);
+    $rotatedAt = DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', (string) $row['rotated_at'], $utc);
+    if (!$expiresAt || !$rotatedAt) {
+        return null;
+    }
+    $expiresSoon = $expiresAt->getTimestamp() - time() < SESSION_TOUCH_HOURS * 3600;
+    $rotationDue = time() - $rotatedAt->getTimestamp() >= SESSION_ROTATE_HOURS * 3600;
+    if ($expiresSoon || $rotationDue) {
+        $newToken = generateSessionToken();
+        if (!db_rotate_session_token($pdo, (int) $row['session_id'], hashSessionToken($newToken), SESSION_TTL_DAYS)) {
+            return null;
+        }
+        setSessionCookie($newToken, time() + SESSION_TTL_DAYS * 86400);
+    }
+
+    return $row;
+}
+
+function requireSession(PDO $pdo): ?array
+{
+    $row = currentSession($pdo, true);
+    if (!$row) {
+        return null;
+    }
+
     return [
-        'user_id'    => (int)$row['user_id'],
-        'username'   => $row['username'],
-        'email'      => $row['email'],
-        'session_id' => (int)$row['session_id'], // <— used by NonceService & WebSocket
+        'user_id' => (int) $row['user_id'],
+        'username' => (string) $row['username'],
+        'email' => (string) $row['email'],
+        'is_admin' => (bool) $row['is_admin'],
+        'session_id' => (int) $row['session_id'],
     ];
 }
 
-function revokeSession(PDO $pdo): bool {
-    $sid = isset($_COOKIE['session_id']) ? (int)$_COOKIE['session_id'] : 0;
-    if ($sid <= 0) return false;
-
-    db_revoke_session($pdo, $sid);
-
-    setcookie('session_id', '', [
-        'expires'  => time() - 3600,
-        'path'     => '/',
-        'secure'   => sessionCookieIsSecure(),
-        'httponly' => true,
-        'samesite' => 'Lax',
-    ]);
-
+function revokeSession(PDO $pdo): bool
+{
+    $session = currentSession($pdo, false);
+    clearSessionCookies();
+    if (!$session) {
+        return false;
+    }
+    db_revoke_session($pdo, (int) $session['session_id']);
     return true;
 }
 
-function touchSession(PDO $pdo, int $sessionId): void {
+function touchSession(PDO $pdo, int $sessionId): void
+{
     db_touch_session($pdo, $sessionId, SESSION_TTL_DAYS);
 }
 
-function destroyAllSessionsForUser(PDO $pdo, int $userId): void {
+function destroyAllSessionsForUser(PDO $pdo, int $userId): void
+{
     db_revoke_all_user_sessions($pdo, $userId);
 }

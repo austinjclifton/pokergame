@@ -21,6 +21,9 @@ jobs:
       TEST_DB_NAME: pokergame_ci_test
       TEST_DB_USER: pokergame_test
       TEST_DB_PASS: test-only-password
+      APP_ORIGIN: http://localhost:5173
+      WS_ALLOWED_ORIGINS: http://localhost:5173
+      TRUSTED_PROXIES: ''
 
     steps:
       - name: Check out repository

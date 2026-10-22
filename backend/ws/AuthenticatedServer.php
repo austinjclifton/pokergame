@@ -17,19 +17,29 @@ require_once __DIR__ . '/../lib/WebSocketJson.php';
  * Production-quality decorator for Ratchet WebSocket components that provides
  * unified authentication and standardized user context.
  *
- * Channel policy:
- *   - "game"  → requires ws_token (no session fallback)
- *   - others  → allow ws_token or session cookie fallback
+ * Every channel requires a short-lived, single-use ws_token and an explicitly
+ * allowed browser Origin. Persistent session cookies are never accepted here.
  */
 final class AuthenticatedServer implements MessageComponentInterface {
     private PDO $pdo;
     private MessageComponentInterface $inner;
     private string $channelType;
+    /** @var list<string> */
+    private array $allowedOrigins;
 
-    public function __construct(PDO $pdo, MessageComponentInterface $inner, string $channelType = 'generic') {
+    /** @param list<string>|null $allowedOrigins */
+    public function __construct(PDO $pdo, MessageComponentInterface $inner, string $channelType = 'generic', ?array $allowedOrigins = null) {
         $this->pdo = $pdo;
         $this->inner = $inner;
         $this->channelType = $channelType;
+        if ($allowedOrigins === null) {
+            $configured = (string) (getenv('WS_ALLOWED_ORIGINS') ?: getenv('APP_ORIGIN') ?: '');
+            $allowedOrigins = array_values(array_filter(array_map('trim', explode(',', $configured))));
+        }
+        if ($allowedOrigins === []) {
+            throw new InvalidArgumentException('At least one WebSocket Origin must be configured');
+        }
+        $this->allowedOrigins = $allowedOrigins;
     }
 
     /** Parse query string from PSR-7 Request */
@@ -39,17 +49,18 @@ final class AuthenticatedServer implements MessageComponentInterface {
         return is_array($params) ? $params : [];
     }
 
-    /** Extract cookie by name */
-    private function getCookie(RequestInterface $req, string $name): ?string {
-        foreach ($req->getHeader('Cookie') as $header) {
-            foreach (explode(';', $header) as $pair) {
-                $parts = array_map('trim', explode('=', $pair, 2) + [null, null]);
-                if ($parts[0] === $name && $parts[1] !== null) {
-                    return urldecode($parts[1]);
-                }
+    private function hasAllowedOrigin(RequestInterface $req): bool {
+        $origins = $req->getHeader('Origin');
+        if (count($origins) !== 1) {
+            return false;
+        }
+        $origin = trim($origins[0]);
+        foreach ($this->allowedOrigins as $allowed) {
+            if (hash_equals($allowed, $origin)) {
+                return true;
             }
         }
-        return null;
+        return false;
     }
 
     /** Validate short-lived ws_token via DB lookup */
@@ -71,78 +82,35 @@ final class AuthenticatedServer implements MessageComponentInterface {
         }
     }
 
-    /** Validate persistent session cookie */
-    private function validateSession(string $sessionId): ?array {
-        $sid = (int)$sessionId;
-        if ($sid <= 0) return null;
-
-        try {
-            $session = db_get_session_with_user($this->pdo, $sid);
-            if (!$session) return null;
-
-            return [
-                'user_id' => (int)$session['user_id'],
-                'username' => (string)$session['username'],
-                'session_id' => (int)$session['session_id'],
-            ];
-        } catch (Throwable $e) {
-            WebSocketLog::error('AuthenticatedServer', 'Session validation failed: ' . $e->getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * Authenticate connection.
-     * Game sockets must use ws_token — no fallback allowed.
-     */
+    /** Authenticate a connection with its single-use bearer token. */
     private function authenticate(RequestInterface $req): ?array {
         $query = $this->parseQuery($req);
         $token = isset($query['token']) ? trim((string)$query['token']) : '';
-        $sessionCookie = $this->getCookie($req, 'session_id');
-
-        // Always prefer token if provided
-        if ($token !== '') {
-            $ctx = $this->validateToken($token);
-            if ($ctx) {
-                return [
-                    'user_id' => $ctx['user_id'],
-                    'username' => $ctx['username'],
-                    'session_id' => $ctx['session_id'],
-                    'token' => $token,
-                    'channel' => $this->channelType,
-                ];
-            }
-            // Invalid token — reject regardless of fallback policy
+        if (!preg_match('/^[a-f0-9]{64}$/D', $token)) {
             return null;
         }
-
-        // 🔒 Require token for all "game" sockets
-        if ($this->channelType === 'game') {
-            WebSocketLog::debug('AuthenticatedServer', 'Rejected game socket without ws_token');
+        $ctx = $this->validateToken($token);
+        if (!$ctx) {
             return null;
         }
-
-        // Fallback allowed only for non-game channels (e.g. lobby)
-        if ($sessionCookie !== null) {
-            $ctx = $this->validateSession($sessionCookie);
-            if ($ctx) {
-                return [
-                    'user_id' => $ctx['user_id'],
-                    'username' => $ctx['username'],
-                    'session_id' => $ctx['session_id'],
-                    'token' => '',
-                    'channel' => $this->channelType,
-                ];
-            }
-        }
-
-        return null;
+        return [
+            'user_id' => $ctx['user_id'],
+            'username' => $ctx['username'],
+            'session_id' => $ctx['session_id'],
+            'channel' => $this->channelType,
+        ];
     }
 
     public function onOpen(ConnectionInterface $conn): void {
         try {
             $req = $conn->httpRequest ?? null;
             if (!$req instanceof RequestInterface) {
+                $this->rejectUnauthorized($conn);
+                return;
+            }
+
+            if (!$this->hasAllowedOrigin($req)) {
+                WebSocketLog::warn('AuthenticatedServer', 'Rejected WebSocket connection from disallowed Origin');
                 $this->rejectUnauthorized($conn);
                 return;
             }
@@ -175,6 +143,11 @@ final class AuthenticatedServer implements MessageComponentInterface {
 
     public function onMessage(ConnectionInterface $from, $msg): void {
         if (!isset($from->userCtx) || !is_array($from->userCtx)) {
+            $this->rejectUnauthorized($from);
+            return;
+        }
+
+        if (!db_is_session_valid($this->pdo, (int) ($from->userCtx['session_id'] ?? 0))) {
             $this->rejectUnauthorized($from);
             return;
         }

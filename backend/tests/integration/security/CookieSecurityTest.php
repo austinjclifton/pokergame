@@ -25,6 +25,21 @@ final class CookieSecurityTest extends TestCase
     private bool $inTransaction = false;
     private array $capturedHeaders = [];
 
+    /** @return array{id:int, token:string} */
+    private function createOpaqueTestSession(int $userId, string $ip, string $userAgent): array
+    {
+        $token = generateSessionToken();
+        $id = db_insert_session(
+            $this->pdo,
+            $userId,
+            hash('sha256', $ip),
+            $userAgent,
+            date('Y-m-d H:i:s', strtotime('+30 days')),
+            hashSessionToken($token),
+        );
+        return ['id' => $id, 'token' => $token];
+    }
+
     protected function setUp(): void
     {
         $this->pdo = test_database_pdo();
@@ -256,10 +271,9 @@ final class CookieSecurityTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
-        $sessionId = \createSession($this->pdo, $userId, '127.0.0.1', 'PHPUnit Test');
-        
-        // Set cookie for testing
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueTestSession($userId, '127.0.0.1', 'PHPUnit Test');
+        $sessionId = $created['id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         
         // Revoke session (this should clear the cookie)
         $result = \revokeSession($this->pdo);
@@ -295,10 +309,9 @@ final class CookieSecurityTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
-        $sessionId = \createSession($this->pdo, $userId, '127.0.0.1', 'PHPUnit Test');
-        
-        // Set cookie
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueTestSession($userId, '127.0.0.1', 'PHPUnit Test');
+        $sessionId = $created['id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         
         // Read session from cookie
         $session = \requireSession($this->pdo);
@@ -334,15 +347,13 @@ final class CookieSecurityTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '192.168.1.100';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
-        $sessionId = \createSession($this->pdo, $userId, '192.168.1.100', 'PHPUnit Test');
-        
-        // Set cookie but change IP
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueTestSession($userId, '192.168.1.100', 'PHPUnit Test');
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         $_SERVER['REMOTE_ADDR'] = '192.168.1.200'; // Different IP
         
         $session = \requireSession($this->pdo);
         
-        $this->assertNull($session, 'Should return null when IP hash does not match');
+        $this->assertNotNull($session, 'A normal client IP change should not invalidate an opaque session');
     }
 
     public function testRequireSessionValidatesUserAgent(): void
@@ -351,10 +362,8 @@ final class CookieSecurityTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'Original User Agent';
         
-        $sessionId = \createSession($this->pdo, $userId, '127.0.0.1', 'Original User Agent');
-        
-        // Set cookie but change user agent
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueTestSession($userId, '127.0.0.1', 'Original User Agent');
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         $_SERVER['HTTP_USER_AGENT'] = 'Different User Agent';
         
         $session = \requireSession($this->pdo);

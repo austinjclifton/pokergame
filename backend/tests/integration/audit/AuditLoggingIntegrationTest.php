@@ -74,17 +74,24 @@ final class AuditLoggingIntegrationTest extends BaseDBIntegrationTest
         $password = 'TestPass123!';
         
         // Create a session and nonce for registration
-        $tempUserId = $this->createTestUserWithPassword('temp_user');
         $ip = '192.168.1.100';
         $ua = 'Test Browser';
-        $sessionId = db_insert_session($this->pdo, $tempUserId, hash('sha256', $ip), $ua, date('Y-m-d H:i:s', time() + 3600));
+        $sessionToken = generateSessionToken();
+        $sessionId = db_insert_temporary_session(
+            $this->pdo,
+            hash('sha256', $ip),
+            $ua,
+            date('Y-m-d H:i:s', strtotime('+30 days')),
+            hashSessionToken($sessionToken),
+        );
         $nonceValue = bin2hex(random_bytes(32));
         $expiresAt = date('Y-m-d H:i:s', time() + 3600);
-        db_insert_nonce($this->pdo, $sessionId, $nonceValue, $expiresAt);
+        db_insert_nonce($this->pdo, $sessionId, $nonceValue, $expiresAt, 'register');
         $nonce = $nonceValue;
         
         $_SERVER['REMOTE_ADDR'] = $ip;
         $_SERVER['HTTP_USER_AGENT'] = $ua;
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionToken;
         
         auth_register_user($this->pdo, $username, $email, $password, $nonce);
         
@@ -152,15 +159,19 @@ final class AuditLoggingIntegrationTest extends BaseDBIntegrationTest
         $_SERVER['REMOTE_ADDR'] = '192.168.1.102';
         $_SERVER['HTTP_USER_AGENT'] = 'Test Browser';
         
-        // Login first
-        $result = auth_login_user($this->pdo, $username, $password);
-        $sessionId = $result['user']['session_id'];
-        
-        // Set cookie for logout
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $sessionToken = generateSessionToken();
+        $sessionId = db_insert_session(
+            $this->pdo,
+            $userId,
+            hash('sha256', $_SERVER['REMOTE_ADDR']),
+            $_SERVER['HTTP_USER_AGENT'],
+            date('Y-m-d H:i:s', strtotime('+30 days')),
+            hashSessionToken($sessionToken),
+        );
+        $_COOKIE[SESSION_COOKIE_NAME] = $sessionToken;
         
         // Logout
-        auth_logout_user($this->pdo);
+        $this->assertTrue(auth_logout_user($this->pdo));
         
         $logs = $this->getAuditLogsByAction('user.logout');
         $this->assertGreaterThan($initialCount, count($logs), 'Logout should create audit log');

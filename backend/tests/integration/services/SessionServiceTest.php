@@ -93,6 +93,25 @@ final class SessionServiceTest extends TestCase
         return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
     }
 
+    /** @return array{id:int, token:string} */
+    private function createOpaqueSession(
+        int $userId,
+        string $ip,
+        string $userAgent,
+        ?string $expiresAt = null,
+    ): array {
+        $token = generateSessionToken();
+        $id = db_insert_session(
+            $this->pdo,
+            $userId,
+            hash('sha256', $ip),
+            $userAgent,
+            $expiresAt ?? date('Y-m-d H:i:s', strtotime('+30 days')),
+            hashSessionToken($token),
+        );
+        return ['id' => $id, 'token' => $token];
+    }
+
     // ============================================================================
     // LOW-LEVEL DB FUNCTION TESTS
     // ============================================================================
@@ -115,6 +134,29 @@ final class SessionServiceTest extends TestCase
         $this->assertSame($ipHash, $session['ip_hash']);
         $this->assertSame($userAgent, $session['user_agent']);
         $this->assertNull($session['revoked_at']);
+    }
+
+    public function testSessionStorageContainsOnlyTokenHash(): void
+    {
+        $userId = $this->createTestUser('testuser_tokenhash');
+        $rawToken = generateSessionToken();
+        $sessionId = db_insert_session(
+            $this->pdo,
+            $userId,
+            hash('sha256', '127.0.0.1'),
+            'PHPUnit Test',
+            date('Y-m-d H:i:s', strtotime('+30 days')),
+            hashSessionToken($rawToken),
+        );
+
+        $session = $this->getSession($sessionId);
+        $this->assertSame(hashSessionToken($rawToken), $session['token_hash']);
+        $this->assertNotSame($rawToken, $session['token_hash']);
+
+        $columns = $this->pdo->query('SHOW COLUMNS FROM sessions')->fetchAll(PDO::FETCH_COLUMN);
+        $this->assertContains('token_hash', $columns);
+        $this->assertNotContains('token', $columns);
+        $this->assertNotContains('refresh_token', $columns);
     }
 
     public function testDbInsertSessionTruncatesLongUserAgent(): void
@@ -163,11 +205,12 @@ final class SessionServiceTest extends TestCase
         $ipHash = hash('sha256', '127.0.0.1');
         // Use MySQL DATE_SUB to ensure timezone consistency
         $stmt = $this->pdo->prepare("
-            INSERT INTO sessions (user_id, expires_at, ip_hash, user_agent)
-            VALUES (:uid, DATE_SUB(NOW(), INTERVAL 1 HOUR), :ip, :ua)
+            INSERT INTO sessions (user_id, token_hash, expires_at, ip_hash, user_agent)
+            VALUES (:uid, :token_hash, DATE_SUB(NOW(), INTERVAL 1 HOUR), :ip, :ua)
         ");
         $stmt->execute([
             'uid' => $userId,
+            'token_hash' => hash('sha256', random_bytes(32)),
             'ip' => $ipHash,
             'ua' => 'Test UA',
         ]);
@@ -236,11 +279,12 @@ final class SessionServiceTest extends TestCase
         $ipHash = hash('sha256', '127.0.0.1');
         // Use MySQL DATE_SUB to ensure timezone consistency
         $stmt = $this->pdo->prepare("
-            INSERT INTO sessions (user_id, expires_at, ip_hash, user_agent)
-            VALUES (:uid, DATE_SUB(NOW(), INTERVAL 1 HOUR), :ip, :ua)
+            INSERT INTO sessions (user_id, token_hash, expires_at, ip_hash, user_agent)
+            VALUES (:uid, :token_hash, DATE_SUB(NOW(), INTERVAL 1 HOUR), :ip, :ua)
         ");
         $stmt->execute([
             'uid' => $userId,
+            'token_hash' => hash('sha256', random_bytes(32)),
             'ip' => $ipHash,
             'ua' => 'Test UA',
         ]);
@@ -301,7 +345,7 @@ final class SessionServiceTest extends TestCase
         
         // Should be approximately 7 days from now
         // Use MySQL to calculate expected time to handle timezone differences
-        $stmt = $this->pdo->query("SELECT DATE_ADD(NOW(), INTERVAL 7 DAY) as expected");
+        $stmt = $this->pdo->query("SELECT DATE_ADD(UTC_TIMESTAMP(), INTERVAL 7 DAY) as expected");
         $expected = strtotime($stmt->fetch()['expected']);
         
         // Allow for a reasonable tolerance (10 seconds) due to execution time and timezone
@@ -449,8 +493,9 @@ final class SessionServiceTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '10.0.0.5';
         $_SERVER['HTTP_USER_AGENT'] = 'TestBrowser/1.0';
         
-        $sessionId = createSession($this->pdo, $userId, '10.0.0.5', 'TestBrowser/1.0');
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '10.0.0.5', 'TestBrowser/1.0');
+        $sessionId = $created['id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         
         $result = requireSession($this->pdo);
         
@@ -461,30 +506,61 @@ final class SessionServiceTest extends TestCase
         $this->assertSame($sessionId, $result['session_id']);
     }
 
-    public function testRequireSessionReturnsNullForWrongIp(): void
+    public function testRequireSessionAllowsClientIpChange(): void
     {
         $userId = $this->createTestUser('testuser_wrongip');
-        $sessionId = createSession($this->pdo, $userId, '10.0.0.5', 'TestBrowser/1.0');
-        
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '10.0.0.5', 'TestBrowser/1.0');
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         $_SERVER['REMOTE_ADDR'] = '10.0.0.6'; // Different IP
         $_SERVER['HTTP_USER_AGENT'] = 'TestBrowser/1.0';
         
         $result = requireSession($this->pdo);
-        $this->assertNull($result, 'Should reject session with wrong IP');
+        $this->assertNotNull($result, 'A normal client IP change should not invalidate an opaque session');
     }
 
     public function testRequireSessionReturnsNullForWrongUserAgent(): void
     {
         $userId = $this->createTestUser('testuser_wrongua');
-        $sessionId = createSession($this->pdo, $userId, '10.0.0.5', 'TestBrowser/1.0');
-        
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '10.0.0.5', 'TestBrowser/1.0');
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         $_SERVER['REMOTE_ADDR'] = '10.0.0.5';
         $_SERVER['HTTP_USER_AGENT'] = 'DifferentBrowser/2.0'; // Different UA
         
         $result = requireSession($this->pdo);
         $this->assertNull($result, 'Should reject session with wrong user agent');
+    }
+
+    public function testRequireSessionRejectsExpiredOpaqueToken(): void
+    {
+        $userId = $this->createTestUser('testuser_expired_token');
+        $created = $this->createOpaqueSession(
+            $userId,
+            '127.0.0.1',
+            'TestBrowser',
+            gmdate('Y-m-d H:i:s', time() - 60),
+        );
+        $_SERVER['HTTP_USER_AGENT'] = 'TestBrowser';
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
+
+        $this->assertNull(requireSession($this->pdo));
+    }
+
+    public function testCurrentSessionRotatesOldBearerToken(): void
+    {
+        $userId = $this->createTestUser('testuser_rotation');
+        $created = $this->createOpaqueSession($userId, '127.0.0.1', 'TestBrowser');
+        $this->pdo->prepare(
+            'UPDATE sessions SET rotated_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 25 HOUR) WHERE id = :id'
+        )->execute(['id' => $created['id']]);
+        $_SERVER['HTTP_USER_AGENT'] = 'TestBrowser';
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
+
+        $this->assertNotNull(currentSession($this->pdo));
+        $rotated = $this->getSession($created['id']);
+        $this->assertNotSame(hashSessionToken($created['token']), $rotated['token_hash']);
+
+        // The request's old credential is invalid immediately after rotation.
+        $this->assertNull(currentSession($this->pdo));
     }
 
     public function testRequireSessionExtendsSessionWhenNearingExpiry(): void
@@ -496,9 +572,9 @@ final class SessionServiceTest extends TestCase
         // Create session with expiry very close to now (within SESSION_TOUCH_HOURS)
         $ipHash = hash('sha256', '127.0.0.1');
         $expiresAt = date('Y-m-d H:i:s', time() + (SESSION_TOUCH_HOURS * 3600) - 60); // 1 minute before touch threshold
-        $sessionId = db_insert_session($this->pdo, $userId, $ipHash, 'TestBrowser', $expiresAt);
-        
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '127.0.0.1', 'TestBrowser', $expiresAt);
+        $sessionId = $created['id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         
         $before = $this->getSession($sessionId);
         requireSession($this->pdo);
@@ -519,9 +595,9 @@ final class SessionServiceTest extends TestCase
         // Create session with expiry far in the future
         $ipHash = hash('sha256', '127.0.0.1');
         $expiresAt = date('Y-m-d H:i:s', time() + (SESSION_TOUCH_HOURS * 3600) + 3600); // 1 hour after touch threshold
-        $sessionId = db_insert_session($this->pdo, $userId, $ipHash, 'TestBrowser', $expiresAt);
-        
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '127.0.0.1', 'TestBrowser', $expiresAt);
+        $sessionId = $created['id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         
         $before = $this->getSession($sessionId);
         requireSession($this->pdo);
@@ -541,9 +617,8 @@ final class SessionServiceTest extends TestCase
         $ua1 = str_repeat('a', 50) . str_repeat('b', 20); // 70 chars: 50 'a's + 20 'b's
         $ua2 = str_repeat('a', 50) . str_repeat('b', 10) . str_repeat('c', 10); // 70 chars: 50 'a's + 10 'b's + 10 'c's
         
-        $sessionId = createSession($this->pdo, $userId, '127.0.0.1', $ua1);
-        
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '127.0.0.1', $ua1);
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         $_SERVER['HTTP_USER_AGENT'] = $ua2; // Different after first 60 chars
         
         // Should still match (only first 60 chars are compared by strncmp)
@@ -570,8 +645,9 @@ final class SessionServiceTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'TestBrowser';
         
-        $sessionId = createSession($this->pdo, $userId, '127.0.0.1', 'TestBrowser');
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '127.0.0.1', 'TestBrowser');
+        $sessionId = $created['id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         
         $result = revokeSession($this->pdo);
         $this->assertTrue($result);
@@ -599,7 +675,7 @@ final class SessionServiceTest extends TestCase
         $expires = strtotime($session['expires_at']);
         
         // Use MySQL to calculate expected time to handle timezone differences
-        $stmt = $this->pdo->query("SELECT DATE_ADD(NOW(), INTERVAL " . SESSION_TTL_DAYS . " DAY) as expected");
+        $stmt = $this->pdo->query("SELECT DATE_ADD(UTC_TIMESTAMP(), INTERVAL " . SESSION_TTL_DAYS . " DAY) as expected");
         $expected = strtotime($stmt->fetch()['expected']);
         
         // Allow for reasonable tolerance (10 seconds) due to execution time and timezone
@@ -676,9 +752,8 @@ final class SessionServiceTest extends TestCase
         $unicodeUA = 'Mozilla/5.0 🚀 Test/测试';
         $_SERVER['HTTP_USER_AGENT'] = $unicodeUA;
         
-        $sessionId = createSession($this->pdo, $userId, '127.0.0.1', $unicodeUA);
-        
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '127.0.0.1', $unicodeUA);
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         $result = requireSession($this->pdo);
         
         $this->assertNotNull($result);
@@ -736,8 +811,9 @@ final class SessionServiceTest extends TestCase
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
         // Create and immediately validate session (very fast)
-        $sessionId = createSession($this->pdo, $userId, '127.0.0.1', 'PHPUnit Test');
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '127.0.0.1', 'PHPUnit Test');
+        $sessionId = $created['id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         
         // Immediately validate (no delay)
         $session = requireSession($this->pdo);
@@ -762,8 +838,8 @@ final class SessionServiceTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test';
         
-        $sessionId = createSession($this->pdo, $userId, '127.0.0.1', 'PHPUnit Test');
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '127.0.0.1', 'PHPUnit Test');
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         
         // Session should be valid (server time is authoritative)
         $session = requireSession($this->pdo);
@@ -779,10 +855,9 @@ final class SessionServiceTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'TestBrowser';
         
-        $sessionId = createSession($this->pdo, $userId, '127.0.0.1', 'TestBrowser');
-        
-        // Set cookie as string (which is normal)
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $created = $this->createOpaqueSession($userId, '127.0.0.1', 'TestBrowser');
+        $sessionId = $created['id'];
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         
         $result = requireSession($this->pdo);
         $this->assertNotNull($result);
@@ -808,10 +883,11 @@ final class SessionServiceTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'TestBrowser';
         
-        $sessionId = createSession($this->pdo, $userId, '127.0.0.1', 'TestBrowser');
+        $created = $this->createOpaqueSession($userId, '127.0.0.1', 'TestBrowser');
+        $sessionId = $created['id'];
         
         // Verify session works
-        $_COOKIE['session_id'] = (string)$sessionId;
+        $_COOKIE[SESSION_COOKIE_NAME] = $created['token'];
         $result = requireSession($this->pdo);
         $this->assertNotNull($result, 'Session should work before user deletion');
         
@@ -834,8 +910,10 @@ final class SessionServiceTest extends TestCase
         $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'TestBrowser';
         
-        $sessionId1 = createSession($this->pdo, $userId, '127.0.0.1', 'Browser1');
-        $sessionId2 = createSession($this->pdo, $userId, '127.0.0.1', 'Browser2');
+        $created1 = $this->createOpaqueSession($userId, '127.0.0.1', 'Browser1');
+        $created2 = $this->createOpaqueSession($userId, '127.0.0.1', 'Browser2');
+        $sessionId1 = $created1['id'];
+        $sessionId2 = $created2['id'];
         
         // Verify sessions exist
         $this->assertNotNull($this->getSession($sessionId1));
@@ -847,7 +925,7 @@ final class SessionServiceTest extends TestCase
         
         // Sessions still exist in database (no cascade delete)
         // But requireSession() should not return them (joins with users)
-        $_COOKIE['session_id'] = (string)$sessionId1;
+        $_COOKIE[SESSION_COOKIE_NAME] = $created1['token'];
         $result = requireSession($this->pdo);
         $this->assertNull($result, 'Session should not be valid after user deletion');
         
