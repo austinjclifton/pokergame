@@ -5,7 +5,7 @@
 - PHP 8.4.27 or newer within the PHP 8.4 release branch
 - Composer 2
 - MySQL 8
-- Node.js 22 and npm
+- Node.js 22.12 or newer on the Node.js 22 or 24 release line, and npm
 - Application PHP extensions: `filter`, `hash`, `json`, `mbstring`, `PDO`, and
   `pdo_mysql`
 - Test/tooling PHP extensions: `dom`, `iconv`, `libxml`, `pdo_sqlite`, `xml`,
