@@ -10,35 +10,6 @@
 declare(strict_types=1);
 
 /**
- * Check if debug mode is enabled.
- * Debug mode can be enabled via:
- * - Query parameter: ?debug=1 or ?debug=true
- * - HTTP header: X-Debug: true or X-Debug: 1
- * - Environment variable: APP_DEBUG=1
- * 
- * @return bool True if debug mode is enabled
- */
-function debug_enabled(): bool {
-    // Check query parameter
-    if (isset($_GET['debug']) && ($_GET['debug'] === '1' || strtolower((string)$_GET['debug']) === 'true')) {
-        return true;
-    }
-    
-    // Check HTTP header
-    $hdr = $_SERVER['HTTP_X_DEBUG'] ?? '';
-    if ($hdr === '1' || strtolower($hdr) === 'true') {
-        return true;
-    }
-    
-    // Check environment variable
-    if ((getenv('APP_DEBUG') ?: '') === '1') {
-        return true;
-    }
-    
-    return false;
-}
-
-/**
  * Escape HTML special characters to prevent XSS attacks.
  * 
  * This function should be used for all user-generated content that will be

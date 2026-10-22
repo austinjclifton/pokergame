@@ -50,6 +50,5 @@ try {
 	echo json_encode([
 		'ok' => false,
 		'error' => 'Failed to fetch pending challenges',
-		'debug' => debug_enabled() ? $e->getMessage() : null,
 	]);
 }

@@ -10,6 +10,12 @@ require_once __DIR__ . '/../app/db/sessions.php';
 const SESSION_TTL_DAYS = 7;
 const SESSION_TOUCH_HOURS = 12;
 
+function sessionCookieIsSecure(): bool
+{
+    $https = strtolower((string) ($_SERVER['HTTPS'] ?? ''));
+    return $https !== '' && $https !== 'off' && $https !== '0';
+}
+
 function createSession(PDO $pdo, int $userId, string $ip, string $userAgent): int {
     $ipHash  = hash('sha256', $ip);
     $expires = (new DateTime())->modify('+' . SESSION_TTL_DAYS . ' days')->format('Y-m-d H:i:s');
@@ -19,7 +25,7 @@ function createSession(PDO $pdo, int $userId, string $ip, string $userAgent): in
     setcookie('session_id', $sessionId, [
         'expires'  => time() + (SESSION_TTL_DAYS * 86400),
         'path'     => '/',
-        'secure'   => isset($_SERVER['HTTPS']),
+        'secure'   => sessionCookieIsSecure(),
         'httponly' => true,
         'samesite' => 'Lax',
     ]);
@@ -40,7 +46,7 @@ function createTemporarySession(PDO $pdo, string $ip, string $userAgent): int {
     setcookie('session_id', $sessionId, [
         'expires'  => time() + (SESSION_TTL_DAYS * 86400),
         'path'     => '/',
-        'secure'   => isset($_SERVER['HTTPS']),
+        'secure'   => sessionCookieIsSecure(),
         'httponly' => true,
         'samesite' => 'Lax',
     ]);
@@ -94,7 +100,7 @@ function revokeSession(PDO $pdo): bool {
     setcookie('session_id', '', [
         'expires'  => time() - 3600,
         'path'     => '/',
-        'secure'   => isset($_SERVER['HTTPS']),
+        'secure'   => sessionCookieIsSecure(),
         'httponly' => true,
         'samesite' => 'Lax',
     ]);

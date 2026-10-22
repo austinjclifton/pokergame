@@ -85,6 +85,48 @@ final class APIEndpointHttpTest extends TestCase
     }
 
     // ============================================================================
+    // /api/login.php HTTP TESTS
+    // ============================================================================
+
+    public function testLoginDoesNotExposeDatabaseSessionIdentifier(): void
+    {
+        $username = 'http_login_' . uniqid('', true);
+        $password = 'testpass123';
+        db_insert_user(
+            $this->pdo,
+            $username,
+            $username . '@test.com',
+            password_hash($password, PASSWORD_DEFAULT)
+        );
+
+        if ($this->pdo->inTransaction()) {
+            $this->pdo->commit();
+            $this->pdo->beginTransaction();
+        }
+
+        $res = run_endpoint(
+            __DIR__ . '/../../../public/api/login.php',
+            [
+                'REQUEST_METHOD' => 'POST',
+                'REMOTE_ADDR' => '127.0.0.1',
+                'HTTP_USER_AGENT' => 'PHPUnit Test',
+            ],
+            [],
+            [],
+            [],
+            json_encode(['username' => $username, 'password' => $password])
+        );
+
+        $this->assertSame(200, $res['status'], 'Login failed: ' . substr($res['body'], 0, 200));
+
+        $data = json_decode($res['body'], true);
+        $this->assertIsArray($data);
+        $this->assertTrue($data['ok'] ?? false);
+        $this->assertArrayHasKey('user', $data);
+        $this->assertArrayNotHasKey('session_id', $data['user'], 'API must not expose the database session identifier');
+    }
+
+    // ============================================================================
     // /api/me.php HTTP TESTS
     // ============================================================================
 
@@ -143,6 +185,7 @@ final class APIEndpointHttpTest extends TestCase
         
         // The user object from requireSession() has 'user_id', not 'id'
         assertJsonHasKeys($data['user'], ['user_id', 'username', 'email']);
+        $this->assertArrayNotHasKey('session_id', $data['user'], 'API must not expose the database session identifier');
     }
 
     public function testMeRejectsPostMethod(): void
@@ -249,6 +292,32 @@ final class APIEndpointHttpTest extends TestCase
         $this->assertIsArray($data);
         $this->assertFalse($data['ok'] ?? true);
         $this->assertEquals('unauthorized', $data['error'] ?? '');
+    }
+
+    public function testWsTokenIgnoresRequestControlledDebugFlags(): void
+    {
+        $sessionId = '987654321';
+        $res = run_endpoint(
+            __DIR__ . '/../../../public/api/ws_token.php',
+            [
+                'REQUEST_METHOD' => 'POST',
+                'REMOTE_ADDR' => '127.0.0.1',
+                'HTTP_X_DEBUG' => '1',
+            ],
+            ['debug' => '1'],
+            [],
+            ['session_id' => $sessionId]
+        );
+
+        $this->assertSame(401, $res['status']);
+
+        $data = json_decode($res['body'], true);
+        $this->assertSame(['ok' => false, 'error' => 'unauthorized'], $data);
+        $this->assertStringNotContainsString($sessionId, $res['body']);
+        $this->assertArrayNotHasKey('detail', $data);
+        $this->assertArrayNotHasKey('where', $data);
+        $this->assertArrayNotHasKey('cookies_seen', $data);
+        $this->assertArrayNotHasKey('session_cookie_value', $data);
     }
 
     public function testWsTokenReturnsValidTokenWithAuth(): void

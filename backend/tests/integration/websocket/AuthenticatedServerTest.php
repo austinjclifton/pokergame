@@ -371,10 +371,10 @@ final class AuthenticatedServerTest extends TestCase
 
     public function testOnOpenSendsServerErrorWhenRequestParsingThrows(): void
     {
-        $uri = $this->createMock(UriInterface::class);
+        $uri = $this->createStub(UriInterface::class);
         $uri->method('getQuery')->willThrowException(new RuntimeException('query exploded'));
 
-        $request = $this->createMock(RequestInterface::class);
+        $request = $this->createStub(RequestInterface::class);
         $request->method('getUri')->willReturn($uri);
 
         $conn = $this->createConnection($request);

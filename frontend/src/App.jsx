@@ -38,7 +38,6 @@ export default function App() {
             id: data.user.id ?? data.user.user_id,
             username: data.user.username,
             email: data.user.email,
-            session_id: data.user.session_id
           });
         
           console.log("Logged in as", data.user.username);

@@ -11,17 +11,23 @@ export default function useLobbySocket({ onMessage, onPlayers, onConnected }) {
   const socketRef = useRef(null);
   const stateRef = useRef({ isMounted: false, isConnecting: false });
   const lastConnectRef = useRef(0);
+  const callbacksRef = useRef({ onMessage, onPlayers, onConnected });
+
+  useEffect(() => {
+    callbacksRef.current = { onMessage, onPlayers, onConnected };
+  }, [onMessage, onPlayers, onConnected]);
 
   useEffect(() => {
     let ws, pingInterval, reconnectTimeout;
-    stateRef.current.isMounted = true;
+    const connectionState = stateRef.current;
+    connectionState.isMounted = true;
 
     const init = async () => {
       const now = Date.now();
-      if (stateRef.current.isConnecting || !stateRef.current.isMounted) return;
+      if (connectionState.isConnecting || !connectionState.isMounted) return;
       if (now - lastConnectRef.current < 1000) return;
       lastConnectRef.current = now;
-      stateRef.current.isConnecting = true;
+      connectionState.isConnecting = true;
 
       try {
         const res = await fetch(API.endpoints.wsToken, {
@@ -36,23 +42,23 @@ export default function useLobbySocket({ onMessage, onPlayers, onConnected }) {
         socketRef.current = ws;
 
         ws.onopen = () => {
-          stateRef.current.isConnecting = false;
-          onConnected?.();
+          connectionState.isConnecting = false;
+          callbacksRef.current.onConnected?.();
         };
 
         ws.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);
-            if (msg.type === "online_users") onPlayers?.(msg.users || []);
-            else onMessage?.(msg);
+            if (msg.type === "online_users") callbacksRef.current.onPlayers?.(msg.users || []);
+            else callbacksRef.current.onMessage?.(msg);
           } catch {
             // Invalid message format - silently ignore
           }
         };
 
         ws.onclose = (ev) => {
-          stateRef.current.isConnecting = false;
-          if (stateRef.current.isMounted && ev.code !== 1000) {
+          connectionState.isConnecting = false;
+          if (connectionState.isMounted && ev.code !== 1000) {
             reconnectTimeout = setTimeout(init, 5000);
           }
         };
@@ -67,7 +73,7 @@ export default function useLobbySocket({ onMessage, onPlayers, onConnected }) {
             ws.send(JSON.stringify({ type: "ping" }));
         }, 30000);
       } catch {
-        stateRef.current.isConnecting = false;
+        connectionState.isConnecting = false;
         // Connection will retry automatically
       }
     };
@@ -75,7 +81,7 @@ export default function useLobbySocket({ onMessage, onPlayers, onConnected }) {
     init();
 
     return () => {
-      stateRef.current.isMounted = false;
+      connectionState.isMounted = false;
       clearInterval(pingInterval);
       clearTimeout(reconnectTimeout);
       ws?.close(1000, "Unmount");

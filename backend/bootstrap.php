@@ -5,6 +5,13 @@ declare(strict_types=1);
 // Backend root
 define('BASE_PATH', __DIR__);
 
+// Report every diagnostic to the configured PHP error log, never to an API
+// response. Endpoint catch blocks return deliberately generic JSON errors.
+error_reporting(E_ALL);
+ini_set('display_errors', '0');
+ini_set('display_startup_errors', '0');
+ini_set('log_errors', '1');
+
 // ---------------------------------------------------------------
 // Output headers (API endpoints only)
 // ---------------------------------------------------------------
@@ -26,9 +33,12 @@ require_once BASE_PATH . '/config/security.php';
 // Session hardening
 // ---------------------------------------------------------------
 if (session_status() === PHP_SESSION_NONE) {
+    $https = strtolower((string) ($_SERVER['HTTPS'] ?? ''));
+    $isHttps = $https !== '' && $https !== 'off' && $https !== '0';
     ini_set('session.cookie_httponly', '1');
-    ini_set('session.cookie_secure', isset($_SERVER['HTTPS']) ? '1' : '0');
+    ini_set('session.cookie_secure', $isHttps ? '1' : '0');
     ini_set('session.cookie_samesite', 'Lax');
+    ini_set('session.use_only_cookies', '1');
     ini_set('session.use_strict_mode', '1');
     session_start();
 }

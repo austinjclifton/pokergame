@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../db/BaseDBIntegrationTest.php';
+require_once __DIR__ . '/../../helpers/WebSocketTestDoubles.php';
 
 /**
  * Integration tests to verify audit logging is triggered during operations.
@@ -343,15 +344,11 @@ final class AuditLoggingIntegrationTest extends BaseDBIntegrationTest
         
         $lobbySocket = new LobbySocket($this->pdo);
         
-        $conn = $this->createMock(\Ratchet\ConnectionInterface::class);
-        $conn->resourceId = 123;
-        $conn->userCtx = [
+        $conn = new WebSocketTestConnection(123, null, [
             'user_id' => $userId,
             'session_id' => $sessionId,
             'username' => 'ws_user',
-        ];
-        
-        $conn->expects($this->atLeastOnce())->method('send');
+        ]);
         
         $lobbySocket->onOpen($conn);
         
@@ -379,16 +376,13 @@ final class AuditLoggingIntegrationTest extends BaseDBIntegrationTest
         
         $lobbySocket = new LobbySocket($this->pdo);
         
-        $conn = $this->createMock(\Ratchet\ConnectionInterface::class);
-        $conn->resourceId = 456;
-        $conn->userCtx = [
+        $conn = new WebSocketTestConnection(456, null, [
             'user_id' => $userId,
             'session_id' => $sessionId,
             'username' => 'chat_user',
-        ];
+        ]);
         
         // Open connection first
-        $conn->expects($this->atLeastOnce())->method('send');
         $lobbySocket->onOpen($conn);
         
         // Send chat message
@@ -430,16 +424,13 @@ final class AuditLoggingIntegrationTest extends BaseDBIntegrationTest
         
         $lobbySocket = new LobbySocket($this->pdo);
         
-        $conn = $this->createMock(\Ratchet\ConnectionInterface::class);
-        $conn->resourceId = 789;
-        $conn->userCtx = [
+        $conn = new WebSocketTestConnection(789, null, [
             'user_id' => $userId,
             'session_id' => $sessionId,
             'username' => 'disconnect_user',
-        ];
+        ]);
         
         // Open connection first
-        $conn->expects($this->atLeastOnce())->method('send');
         $lobbySocket->onOpen($conn);
         
         // Close connection
@@ -467,16 +458,13 @@ final class AuditLoggingIntegrationTest extends BaseDBIntegrationTest
         
         $lobbySocket = new LobbySocket($this->pdo);
         
-        $conn = $this->createMock(\Ratchet\ConnectionInterface::class);
-        $conn->resourceId = 999;
-        $conn->userCtx = [
+        $conn = new WebSocketTestConnection(999, null, [
             'user_id' => $userId,
             'session_id' => $sessionId,
             'username' => 'ratelimit_user',
-        ];
+        ]);
         
         // Open connection
-        $conn->expects($this->atLeastOnce())->method('send');
         $lobbySocket->onOpen($conn);
         
         // Send many messages rapidly to trigger rate limit
@@ -487,11 +475,15 @@ final class AuditLoggingIntegrationTest extends BaseDBIntegrationTest
         }
         
         // Try one more that should be rate limited
-        $conn->expects($this->atLeastOnce())->method('send')->with($this->callback(function($msg) {
-            $data = json_decode($msg, true);
-            return isset($data['type']) && $data['type'] === 'error' && $data['error'] === 'rate_limited';
-        }));
         $lobbySocket->onMessage($conn, json_encode(['type' => 'ping']));
+
+        $this->assertNotEmpty(array_filter(
+            $conn->sentMessages,
+            static function (string $message): bool {
+                $data = json_decode($message, true);
+                return ($data['type'] ?? null) === 'error' && ($data['error'] ?? null) === 'rate_limited';
+            }
+        ));
         
         $logs = $this->getAuditLogsByAction('rate_limit.exceeded');
         $this->assertGreaterThan($initialCount, count($logs), 'Rate limit violation should create audit log');

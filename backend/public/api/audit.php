@@ -123,9 +123,5 @@ try {
 	]);
 } catch (Throwable $e) {
 	error_log('[audit.php] ' . $e->getMessage());
-	$payload = ['ok' => false, 'error' => 'server_error'];
-	if (debug_enabled()) {
-		$payload['detail'] = $e->getMessage();
-	}
-	json_out($payload, 500);
+	json_out(['ok' => false, 'error' => 'server_error'], 500);
 }

@@ -58,11 +58,6 @@ try {
 
     error_log('[db.php] Database connection failed: ' . $e->getMessage());
 
-    $response = ['ok' => false, 'error' => 'Database connection failed'];
-    if (getenv('APP_ENV') === 'development') {
-        $response['details'] = $e->getMessage();
-    }
-
-    echo json_encode($response);
+    echo json_encode(['ok' => false, 'error' => 'Database connection failed']);
     exit;
 }

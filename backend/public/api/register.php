@@ -57,6 +57,7 @@ if (!$passwordValidation['valid']) {
 
 try {
 	$result = auth_register_user($pdo, $canonicalUsername, $canonicalEmail, $password, $nonce);
+	unset($result['user']['session_id']);
 	$accept = $_SERVER['HTTP_ACCEPT'] ?? '';
 
 	if (stripos($accept, 'text/html') !== false) {
@@ -103,6 +104,7 @@ try {
 	echo json_encode(['ok' => false, 'error' => $message]);
 	exit;
 } catch (Throwable $e) {
+	error_log('[register.php] ' . $e->getMessage());
 	http_response_code(500);
 	echo json_encode(['ok' => false, 'error' => 'Server error']);
 	exit;

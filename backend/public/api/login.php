@@ -43,6 +43,7 @@ try {
 	if (isset($result['user']['username'])) {
 		$result['user']['username'] = escape_html((string) $result['user']['username']);
 	}
+	unset($result['user']['session_id']);
 
 	json_out($result, 200);
 } catch (RuntimeException $e) {
@@ -65,27 +66,11 @@ try {
 	}
 
 	error_log('[login.php] RuntimeException: ' . $e->getMessage());
-	$response = ['ok' => false, 'error' => 'bad_request'];
-	if (debug_enabled()) {
-		$response['detail'] = $e->getMessage();
-	}
-	json_out($response, 400);
+	json_out(['ok' => false, 'error' => 'bad_request'], 400);
 } catch (JsonException $e) {
 	error_log('[login.php] JSON parse error: ' . $e->getMessage());
-	$response = ['ok' => false, 'error' => 'invalid_json'];
-	if (debug_enabled()) {
-		$response['detail'] = $e->getMessage();
-	}
-	json_out($response, 400);
+	json_out(['ok' => false, 'error' => 'invalid_json'], 400);
 } catch (Throwable $e) {
 	error_log('[login.php] ' . $e->getMessage());
-	$payload = ['ok' => false, 'error' => 'server_error'];
-	if (debug_enabled()) {
-		$payload['detail'] = $e->getMessage();
-		$trace = $e->getTrace();
-		if (!empty($trace[0]['file'])) {
-			$payload['where'] = basename($trace[0]['file']) . ':' . ($trace[0]['line'] ?? '?');
-		}
-	}
-	json_out($payload, 500);
+	json_out(['ok' => false, 'error' => 'server_error'], 500);
 }

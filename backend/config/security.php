@@ -9,13 +9,18 @@
 // -------------------- Core Security Headers --------------------
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
-// API responses are JSON; this policy also protects accidental HTML responses.
-header("Content-Security-Policy: default-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com;");
-header('Referrer-Policy: no-referrer-when-downgrade');
+// API responses never execute application assets. Keep WebSocket destinations
+// available for clients that apply this policy to a response context.
+header("Content-Security-Policy: default-src 'none'; base-uri 'none'; connect-src 'self' ws: wss:; form-action 'none'; frame-ancestors 'none'; object-src 'none'");
+header('Referrer-Policy: no-referrer');
 header('X-Permitted-Cross-Domain-Policies: none');
+header('Permissions-Policy: camera=(), geolocation=(), microphone=()');
+header('Cache-Control: no-store');
 
 // Enable HSTS only when HTTPS is used (do not force on localhost)
-if (!empty($_SERVER['HTTPS'])) {
+$https = strtolower((string) ($_SERVER['HTTPS'] ?? ''));
+$isHttps = $https !== '' && $https !== 'off' && $https !== '0';
+if ($isHttps) {
     header('Strict-Transport-Security: max-age=31536000; includeSubDomains; preload');
 }
 
@@ -46,6 +51,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
  * Set allowed HTTP methods for the current endpoint.
  * Example: setAllowedMethods('POST, OPTIONS');
  */
-function setAllowedMethods(string $methods): void {
+function setAllowedMethods(string $methods): void
+{
     header("Access-Control-Allow-Methods: {$methods}");
 }

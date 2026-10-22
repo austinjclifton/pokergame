@@ -5,78 +5,65 @@
 // Cards start face down and auto-flip when revealed based on game phase.
 // -----------------------------------------------------------------------------
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Card from "../cards/Card";
 import CardBack from "../cards/CardBack";
 import { parseCard } from "../../utils/cardParser";
 import "../../styles/game.css";
 
+function revealedCardCount(phase, availableCards) {
+  const phaseUpper = (phase || "PREFLOP").toString().toUpperCase();
+  if (phaseUpper === "PREFLOP") return 0;
+  if (phaseUpper === "FLOP") return 3;
+  if (phaseUpper === "TURN") return 4;
+  if (phaseUpper === "RIVER") return 5;
+  return availableCards;
+}
+
 export default function CommunityCards({ cards = [], phase = "PREFLOP" }) {
   const parsedCards = cards.map(parseCard).filter(Boolean);
-  
-  // Determine how many cards should be revealed based on phase
-  const getRevealedCount = () => {
-    const phaseUpper = (phase || "PREFLOP").toString().toUpperCase();
-    if (phaseUpper === "PREFLOP") return 0;
-    if (phaseUpper === "FLOP") return 3;
-    if (phaseUpper === "TURN") return 4;
-    if (phaseUpper === "RIVER") return 5;
-    return parsedCards.length; // Fallback: show all if phase unknown
-  };
+  const targetRevealedCount = revealedCardCount(phase, parsedCards.length);
 
   const [revealedCards, setRevealedCards] = useState(new Set());
   const [flippingCards, setFlippingCards] = useState(new Set());
-  const [previousPhase, setPreviousPhase] = useState(null);
+  const revealedCountRef = useRef(0);
 
   // Auto-flip cards when phase changes (including on first mount)
   useEffect(() => {
-    const newRevealedCount = getRevealedCount();
-    const currentRevealedCount = revealedCards.size;
+    const timers = [];
+    const currentRevealedCount = revealedCountRef.current;
     
     // Reset if phase went backwards (new hand started)
-    if (newRevealedCount < currentRevealedCount) {
+    if (targetRevealedCount < currentRevealedCount) {
+      revealedCountRef.current = 0;
       setRevealedCards(new Set());
       setFlippingCards(new Set());
-      setPreviousPhase(phase);
-      return;
+      return undefined;
     }
-    
-    // Trigger animation if phase changed OR if we need to reveal cards (including first mount)
-    const phaseChanged = phase !== previousPhase;
-    const needsReveal = newRevealedCount > currentRevealedCount;
-    
-    if (phaseChanged || needsReveal) {
-      // Cards need to be revealed - flip them with staggered timing
-      const cardsToFlip = [];
-      for (let i = currentRevealedCount; i < newRevealedCount && i < parsedCards.length; i++) {
-        cardsToFlip.push(i);
-      }
-      
-      // Only animate if there are cards to flip
-      if (cardsToFlip.length > 0) {
-        // Flip each card with a delay for visual effect - each card flips individually
-        cardsToFlip.forEach((cardIdx, delayIdx) => {
-          const delay = delayIdx * 400; // 400ms delay between each card for clearer individual flips
-          setTimeout(() => {
-            // Start flip animation
-            setFlippingCards(prev => new Set([...prev, cardIdx]));
-            // Mark as revealed after flip completes
-            setTimeout(() => {
-              setFlippingCards(prev => {
-                const next = new Set(prev);
-                next.delete(cardIdx);
-                return next;
-              });
-              // Mark this card as revealed
-              setRevealedCards(prev => new Set([...prev, cardIdx]));
-            }, 400); // Match flip animation duration
-          }, delay);
-        });
-      }
-      
-      setPreviousPhase(phase);
+
+    const cardsToFlip = [];
+    const availableTarget = Math.min(targetRevealedCount, parsedCards.length);
+    for (let i = currentRevealedCount; i < availableTarget; i++) {
+      cardsToFlip.push(i);
     }
-  }, [phase, cards.length, parsedCards.length]);
+
+    cardsToFlip.forEach((cardIdx, delayIdx) => {
+      timers.push(setTimeout(() => {
+        setFlippingCards((previous) => new Set([...previous, cardIdx]));
+        timers.push(setTimeout(() => {
+          setFlippingCards((previous) => {
+            const next = new Set(previous);
+            next.delete(cardIdx);
+            return next;
+          });
+          setRevealedCards((previous) => new Set([...previous, cardIdx]));
+          revealedCountRef.current = Math.max(revealedCountRef.current, cardIdx + 1);
+        }, 400));
+      }, delayIdx * 400));
+    });
+
+    return () => timers.forEach(clearTimeout);
+  }, [phase, parsedCards.length, targetRevealedCount]);
 
   // Always render 5 card slots
   const cardSlots = Array.from({ length: 5 }, (_, idx) => {

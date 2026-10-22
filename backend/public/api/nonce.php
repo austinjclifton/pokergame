@@ -11,9 +11,5 @@ try {
 } catch (Throwable $e) {
 	error_log('[nonce.php] ' . $e->getMessage());
 	http_response_code(500);
-	$response = ['ok' => false, 'message' => 'Server error'];
-	if (debug_enabled()) {
-		$response['detail'] = $e->getMessage();
-	}
-	echo json_encode($response);
+	echo json_encode(['ok' => false, 'message' => 'Server error']);
 }

@@ -79,9 +79,5 @@ try {
 } catch (Exception $e) {
 	error_log('[challenge_response.php] ' . $e->getMessage());
 	http_response_code(500);
-	$response = ['ok' => false, 'error' => 'Failed to process challenge response'];
-	if (debug_enabled()) {
-		$response['message'] = $e->getMessage();
-	}
-	echo json_encode($response);
+	echo json_encode(['ok' => false, 'error' => 'Failed to process challenge response']);
 }

@@ -45,14 +45,9 @@ try {
 			'user_id' => (int) $user['user_id'],
 			'username' => escape_html((string) $user['username']),
 			'email' => $user['email'] ?? null,
-			'session_id' => $user['session_id'] ?? null,
 		],
 	]);
 } catch (Throwable $e) {
 	error_log('[me.php] ' . $e->getMessage());
-	$response = ['ok' => false, 'message' => 'Server error'];
-	if (debug_enabled()) {
-		$response['detail'] = $e->getMessage();
-	}
-	json_out($response, 500);
+	json_out(['ok' => false, 'message' => 'Server error'], 500);
 }
