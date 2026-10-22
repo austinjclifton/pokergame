@@ -47,8 +47,11 @@ final class WinnerCalculator
         // 1. Compute total pot from contributions
         //
         $totalPot = 0;
+        $contributions = [];
         foreach ($players as $p) {
-            $totalPot += max(0, (int)$p['contribution']);
+            $seatContribution = max(0, (int)$p['contribution']);
+            $contributions[(int)$p['seat']] = $seatContribution;
+            $totalPot += $seatContribution;
         }
 
         if ($totalPot <= 0) {
@@ -124,12 +127,22 @@ final class WinnerCalculator
             $payouts[$seat] = 0;
         }
 
+        $contestablePot = $totalPot;
+        if (count($players) === 2 && count($rankVals) === 2) {
+            $matchedContribution = min($contributions);
+            $contestablePot = $matchedContribution * 2;
+
+            foreach ($rankVals as $seat => $rv) {
+                $payouts[$seat] = max(0, $contributions[$seat] - $matchedContribution);
+            }
+        }
+
         if (count($winnerSeats) === 1) {
             //
             // Single winner takes entire pot
             //
             $win = $winnerSeats[0];
-            $payouts[$win] = $totalPot;
+            $payouts[$win] += $contestablePot;
 
         } else {
             //
@@ -138,14 +151,14 @@ final class WinnerCalculator
             // (here: to the lowest seat number).
             //
             $numWinners = count($winnerSeats);
-            $baseShare  = intdiv($totalPot, $numWinners);
-            $remainder  = $totalPot - ($baseShare * $numWinners);
+            $baseShare  = intdiv($contestablePot, $numWinners);
+            $remainder  = $contestablePot - ($baseShare * $numWinners);
 
             // Optional: sort winner seats to make remainder distribution predictable
             sort($winnerSeats, SORT_NUMERIC);
 
             foreach ($winnerSeats as $index => $s) {
-                $payouts[$s] = $baseShare;
+                $payouts[$s] += $baseShare;
                 if ($remainder > 0) {
                     $payouts[$s] += 1;
                     $remainder--;

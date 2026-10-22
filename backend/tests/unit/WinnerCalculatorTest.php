@@ -50,6 +50,45 @@ final class WinnerCalculatorTest extends TestCase
         $this->assertSame(100, $result['payouts'][2]);
     }
 
+    public function test_short_stack_winner_cannot_win_unmatched_all_in_chips(): void
+    {
+        $result = $this->calculate([
+            $this->player(1, ['AS', 'AD'], 100),
+            $this->player(2, ['KH', 'KD'], 200),
+        ], ['2C', '7D', '9H', 'JC', '3S']);
+
+        $this->assertSame(300, $result['totalPot']);
+        $this->assertSame(200, $result['payouts'][1]);
+        $this->assertSame(100, $result['payouts'][2]);
+        $this->assertSame(300, array_sum($result['payouts']));
+    }
+
+    public function test_deep_stack_winner_receives_contested_pot_and_unmatched_chips(): void
+    {
+        $result = $this->calculate([
+            $this->player(1, ['KH', 'KD'], 100),
+            $this->player(2, ['AS', 'AD'], 200),
+        ], ['2C', '7D', '9H', 'JC', '3S']);
+
+        $this->assertSame(300, $result['totalPot']);
+        $this->assertSame(0, $result['payouts'][1]);
+        $this->assertSame(300, $result['payouts'][2]);
+        $this->assertSame(300, array_sum($result['payouts']));
+    }
+
+    public function test_tied_heads_up_all_in_returns_each_players_unmatched_chips(): void
+    {
+        $result = $this->calculate([
+            $this->player(1, ['AS', 'KD'], 100),
+            $this->player(2, ['AC', 'KH'], 200),
+        ], ['QH', 'JH', '10D', '2C', '3S']);
+
+        $this->assertSame(300, $result['totalPot']);
+        $this->assertSame(100, $result['payouts'][1]);
+        $this->assertSame(200, $result['payouts'][2]);
+        $this->assertSame(300, array_sum($result['payouts']));
+    }
+
     public function test_folded_players_are_excluded_from_winner_selection(): void
     {
         $result = $this->calculate([
