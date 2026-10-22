@@ -259,6 +259,83 @@ final class GameServiceTest extends TestCase
         $this->assertStringContainsString('illegal action', strtolower($result['message']));
     }
 
+    public function test_minimum_reraise_is_enforced_without_mutating_state(): void
+    {
+        $this->startHandWithPlayers([
+            ['seat' => 1, 'stack' => 1000],
+            ['seat' => 2, 'stack' => 1000],
+        ]);
+
+        $this->assertTrue($this->act(1, ActionType::RAISE, 20)['ok']);
+        $before = $this->game->getSnapshot();
+
+        $rejected = $this->act(2, ActionType::RAISE, 19);
+        $this->assertFalse($rejected['ok']);
+        $this->assertSame('Minimum raise is to 60', $rejected['message']);
+        $this->assertSame($before, $this->game->getSnapshot());
+
+        $accepted = $this->act(2, ActionType::RAISE, 20);
+        $this->assertTrue($accepted['ok']);
+        $this->assertSame(60, $accepted['state']['currentBet']);
+        $this->assertSame(60, $accepted['state']['players'][2]['bet']);
+    }
+
+    public function test_short_small_blind_does_not_remain_the_action_seat(): void
+    {
+        $result = $this->startHandWithPlayers([
+            ['seat' => 1, 'stack' => 10],
+            ['seat' => 2, 'stack' => 100],
+        ]);
+
+        $this->assertTrue($result['ok']);
+        $this->assertTrue($result['state']['players'][1]['allIn']);
+        $this->assertSame(2, $result['state']['actionSeat']);
+        $this->assertSame([ActionType::CHECK], $this->legalActions(2));
+
+        $settled = $this->act(2, ActionType::CHECK);
+        $this->assertTrue($settled['ok']);
+        $this->assertTrue($settled['handEnded'] || $settled['matchEnded']);
+        $this->assertSame('showdown', $settled['state']['phase']);
+        $this->assertSame(110, array_sum(array_column($settled['state']['players'], 'stack')));
+    }
+
+    public function test_blinds_that_put_both_players_all_in_settle_without_an_action(): void
+    {
+        $result = $this->startHandWithPlayers([
+            ['seat' => 1, 'stack' => 10],
+            ['seat' => 2, 'stack' => 20],
+        ]);
+
+        $this->assertTrue($result['ok']);
+        $this->assertTrue($result['handEnded'] || $result['matchEnded']);
+        $this->assertSame('showdown', $result['state']['phase']);
+        $this->assertSame(-1, $result['state']['actionSeat']);
+        $this->assertSame(30, array_sum(array_column($result['state']['players'], 'stack')));
+    }
+
+    public function test_fold_with_unequal_blinds_conserves_chips_into_next_hand(): void
+    {
+        $result = $this->startHandWithPlayers([
+            ['seat' => 1, 'stack' => 1000],
+            ['seat' => 2, 'stack' => 1000],
+        ]);
+        $this->assertTrue($result['ok']);
+
+        $fold = $this->act(1, ActionType::FOLD);
+        $this->assertTrue($fold['ok']);
+        $this->assertTrue($fold['handEnded']);
+        $this->assertSame(30, $fold['summary']['pot']);
+        $this->assertSame(2000, array_sum(array_column($fold['state']['players'], 'stack')));
+        $this->assertSame(990, $fold['state']['players'][1]['stack']);
+        $this->assertSame(1010, $fold['state']['players'][2]['stack']);
+
+        $next = $this->game->startNextHand(12345);
+        $this->assertTrue($next['ok']);
+        $this->assertSame(2000, $next['state']['pot'] + array_sum(array_column($next['state']['players'], 'stack')));
+        $this->assertSame(20, $next['state']['players'][1]['bet']);
+        $this->assertSame(10, $next['state']['players'][2]['bet']);
+    }
+
     /**
      * Test betting and raising
      */

@@ -99,6 +99,12 @@ final class GameService
             $seed
         );
 
+        $openingSummary = null;
+        $phaseInfo = PhaseEngine::advance($this->state);
+        if ($phaseInfo !== null && ($phaseInfo['handEnded'] ?? false)) {
+            $openingSummary = $this->runShowdownSettlement();
+        }
+
         // Bump version, persist snapshot, and broadcast hand_start event
         if ($this->gameId !== null) {
             $newVersion    = $this->persistence->bumpVersion($this->gameId);
@@ -122,6 +128,10 @@ final class GameService
         }
 
         $this->handBootstrapped = true;
+
+        if ($openingSummary !== null) {
+            return $this->buildResolvedHandResult($openingSummary);
+        }
 
         return $this->buildStateResult($this->persistence->snapshot($this->state));
     }

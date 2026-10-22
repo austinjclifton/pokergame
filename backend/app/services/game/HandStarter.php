@@ -109,7 +109,10 @@ final class HandStarter
         // ---------------------------------------------------------
         // 7. Action starts UTG (first seat after big blind)
         // ---------------------------------------------------------
-        $state->actionSeat = TurnOrder::nextSeat($state->players, $state->bigBlindSeat);
+        $state->actionSeat = TurnOrder::normalizeActiveSeat(
+            $state->players,
+            TurnOrder::nextSeat($state->players, $state->bigBlindSeat)
+        );
 
         // ---------------------------------------------------------
         // 8. Increment hand counter

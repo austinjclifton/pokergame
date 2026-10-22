@@ -218,5 +218,45 @@ final class BettingEngineTest extends TestCase
         $this->assertFalse($result2['ok'], 'Raise to 55 should fail');
         $this->assertStringContainsString('Minimum raise is to 60', $result2['message'] ?? '', 'Error should specify minimum raise of 60');
     }
+
+    public function test_raise_cannot_exceed_opponents_matchable_total_after_blinds(): void
+    {
+        $smallBlind = $this->makePlayerState(1, 990, ['bet' => 10]);
+        $shortBigBlind = $this->makePlayerState(2, 80, ['bet' => 20]);
+        $players = [1 => $smallBlind, 2 => $shortBigBlind];
+
+        $result = BettingEngine::executeAction(
+            $smallBlind,
+            ActionType::RAISE,
+            90,
+            20,
+            20,
+            20,
+            $players
+        );
+
+        $this->assertFalse($result['ok']);
+        $this->assertSame('Raise exceeds effective stack', $result['message']);
+        $this->assertSame(990, $smallBlind->stack);
+        $this->assertSame(10, $smallBlind->bet);
+    }
+
+    public function test_deep_stack_cannot_shove_after_opponent_is_all_in(): void
+    {
+        $deepStack = $this->makePlayerState(1, 900, ['bet' => 100, 'actedThisStreet' => true]);
+        $shortStack = $this->makePlayerState(2, 0, ['bet' => 150, 'allIn' => true, 'actedThisStreet' => true]);
+
+        $actions = BettingEngine::getLegalActions(
+            $deepStack,
+            150,
+            100,
+            [1 => $deepStack, 2 => $shortStack]
+        );
+
+        $this->assertContains(ActionType::CALL, $actions);
+        $this->assertContains(ActionType::FOLD, $actions);
+        $this->assertNotContains(ActionType::RAISE, $actions);
+        $this->assertNotContains(ActionType::ALLIN, $actions);
+    }
 }
 

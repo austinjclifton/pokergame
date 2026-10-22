@@ -29,7 +29,8 @@ final class BettingEngine
      *
      * effectiveStack = min(
      *    my stack,
-     *    min over opponents: opp.stack + opp.bet (for non-folded opponents)
+     *    min over opponents: opp.stack + opp.bet - my bet
+     *      (for non-folded opponents)
      * )
      */
     private static function getEffectiveStack(PlayerState $player, array $allPlayers): int
@@ -38,8 +39,9 @@ final class BettingEngine
 
         foreach ($allPlayers as $p) {
             if ($p !== $player && !$p->folded) {
-                // Include their current street bet so action stays matchable
-                $oppStacks[] = $p->stack + $p->bet;
+                // Convert the opponent's maximum total wager into the
+                // additional chips this player can still put in.
+                $oppStacks[] = max(0, $p->stack + $p->bet - $player->bet);
             }
         }
 
@@ -311,7 +313,7 @@ final class BettingEngine
         }
 
         // --- all-in (true shove: any positive stack) ---
-        if ($player->stack > 0) {
+        if ($player->stack > 0 && ($hasLiveOpponent || $player->stack <= $callAmount)) {
             $actions[] = ActionType::ALLIN;
         }
 
