@@ -6,33 +6,6 @@ declare(strict_types=1);
 define('BASE_PATH', __DIR__);
 
 // ---------------------------------------------------------------
-// LOCAL vs VM detection
-// ---------------------------------------------------------------
-$host = $_SERVER['HTTP_HOST'] ?? '';
-$https = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on';
-
-// Local dev = no HTTPS + localhost or 127.x.x.x
-$runningLocally =
-    (!$https) &&
-    (str_starts_with($host, 'localhost') || str_starts_with($host, '127.'));
-
-// ---------------------------------------------------------------
-// CORS (LOCAL ONLY)
-// ---------------------------------------------------------------
-if ($runningLocally) {
-    header("Access-Control-Allow-Origin: http://localhost:5173");
-    header("Access-Control-Allow-Credentials: true");
-    header("Access-Control-Allow-Headers: Content-Type, Authorization");
-    header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
-
-    // Preflight requests must exit early
-    if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-        http_response_code(200);
-        exit();
-    }
-}
-
-// ---------------------------------------------------------------
 // Output headers (API endpoints only)
 // ---------------------------------------------------------------
 header('Content-Type: application/json; charset=utf-8');
@@ -54,7 +27,7 @@ require_once BASE_PATH . '/config/security.php';
 // ---------------------------------------------------------------
 if (session_status() === PHP_SESSION_NONE) {
     ini_set('session.cookie_httponly', '1');
-    ini_set('session.cookie_secure', '1');  // HTTPS VM enforces secure cookies
+    ini_set('session.cookie_secure', isset($_SERVER['HTTPS']) ? '1' : '0');
     ini_set('session.cookie_samesite', 'Lax');
     ini_set('session.use_strict_mode', '1');
     session_start();

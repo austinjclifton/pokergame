@@ -2,47 +2,16 @@
 
 A 1v1 poker simulation game built with application security as its main objective.
 
-## Quick Start
+## Local development
 
-Prerequisites and complete testing instructions are documented in
-[`docs/testing.md`](docs/testing.md).
+The complete macOS setup, configuration, startup, shutdown, and manual
+end-to-end verification workflow is in
+[`docs/local-development.md`](docs/local-development.md).
 
-**Frontend:**
-```bash
-cd frontend
-npm run dev
-```
-
-**Backend API:**
-```bash
-php -S localhost:8000 -t backend/public
-```
-
-**WebSocket Server:**
-```bash
-php backend/ws/server.php
-```
-
-## Local Development
-
-For application development, provide all database settings together. Partial
-configuration is rejected rather than mixed with defaults:
-
-```bash
-export DB_HOST=127.0.0.1
-export DB_PORT=3306
-export DB_NAME=pokergame
-export DB_USER=root
-export DB_PASS=
-php backend/ws/server.php
-```
-
-Available environment variables:
-- `DB_HOST`
-- `DB_PORT` (defaults to `3306`)
-- `DB_NAME`
-- `DB_USER`
-- `DB_PASS` (may be explicitly empty for local development)
+Application database settings are always explicit. Copy `.env.example` to the
+ignored `.env` file and load it into each PHP terminal before starting the HTTP
+or WebSocket server. No hostname, RIT, DigitalOcean, or HAProxy detection is
+used.
 
 ## Tests
 
@@ -61,6 +30,8 @@ cd backend
 vendor/bin/phpunit --configuration phpunit.integration.xml
 ```
 
-The WebSocket baseline and persisted state format are recorded in
+Additional prerequisites and test-database instructions are documented in
+[`docs/testing.md`](docs/testing.md). The WebSocket baseline and persisted
+state format are recorded in
 [`docs/websocket-protocol.md`](docs/websocket-protocol.md) and
 [`docs/game-snapshot-format.md`](docs/game-snapshot-format.md).

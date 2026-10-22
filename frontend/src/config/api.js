@@ -1,19 +1,21 @@
 // src/config/api.js
-// -----------------------------------------------------------------------------
-// Centralized API + WebSocket configuration with automatic environment detection
-// -----------------------------------------------------------------------------
+// Explicit variables support split deployments. Development defaults target the
+// documented local servers; production defaults use the page's own origin.
+const trimTrailingSlash = (value) => value.replace(/\/+$/, "");
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-
-const IS_LOCAL =
-  API_BASE_URL.includes("localhost") || API_BASE_URL.includes("127.0.0.1");
-
-// LOCAL → ws://localhost:8080
-// VM    → wss://pokergame.webdev.gccis.rit.edu/ws (from env)
-const WS_BASE_URL = IS_LOCAL
+const defaultApiBaseUrl = import.meta.env.DEV
+  ? "http://localhost:8000"
+  : window.location.origin;
+const defaultWsBaseUrl = import.meta.env.DEV
   ? "ws://localhost:8080"
-  : import.meta.env.VITE_WS_BASE_URL; // e.g. wss://pokergame.webdev.gccis.rit.edu/ws
+  : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
+
+const API_BASE_URL = trimTrailingSlash(
+  import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl,
+);
+const WS_BASE_URL = trimTrailingSlash(
+  import.meta.env.VITE_WS_BASE_URL || defaultWsBaseUrl,
+);
 
 export const API = {
   baseURL: API_BASE_URL,

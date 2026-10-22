@@ -87,9 +87,10 @@ guard. Never invoke the database reset scripts as part of the test workflow.
 ```bash
 cd backend
 composer validate --no-check-publish
-composer audit --locked --no-dev
+composer audit --locked
 
 cd ../frontend
+npm audit --audit-level=low
 npm run lint
 npm run build
 ```

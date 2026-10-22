@@ -9,7 +9,7 @@
 // -------------------- Core Security Headers --------------------
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
-// Content-Security-Policy: Allow WebSocket connections and inline scripts (needed for React/Vite dev)
+// API responses are JSON; this policy also protects accidental HTML responses.
 header("Content-Security-Policy: default-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com;");
 header('Referrer-Policy: no-referrer-when-downgrade');
 header('X-Permitted-Cross-Domain-Policies: none');
@@ -20,25 +20,22 @@ if (!empty($_SERVER['HTTPS'])) {
 }
 
 // -------------------- CORS Configuration --------------------
-$allowedOrigins = [
-    'http://localhost:5173',               // local Vite dev
-    'https://pokergame.futuredomain.com',    // production (adjust as needed)
-];
-
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if (in_array($origin, $allowedOrigins, true)) {
+$allowedOrigin = trim((string) (getenv('APP_ORIGIN') ?: ''));
+if ($allowedOrigin !== '' && $origin !== '' && hash_equals($allowedOrigin, $origin)) {
     header("Access-Control-Allow-Origin: $origin");
+    header('Vary: Origin');
 }
 
 header('Access-Control-Allow-Credentials: true');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 
 // Always JSON API responses
 header('Content-Type: application/json; charset=utf-8');
 
 // -------------------- Preflight Handling --------------------
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
     http_response_code(204);
     exit;
 }
