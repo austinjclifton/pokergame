@@ -34,31 +34,21 @@ declare(strict_types=1);
  */
 function db_insert_snapshot(PDO $pdo, int $gameId, int $version, array $state): bool
 {
-    try {
-        $stmt = $pdo->prepare("
-            INSERT INTO game_snapshots (game_id, version, state_json)
-            VALUES (:game_id, :version, :state_json)
-            ON DUPLICATE KEY UPDATE
-                state_json = VALUES(state_json),
-                created_at = CURRENT_TIMESTAMP
-        ");
-        
-        $stateJson = json_encode($state, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        
-        $stmt->execute([
-            'game_id' => $gameId,
-            'version' => $version,
-            'state_json' => $stateJson,
-        ]);
-        
-        return true;
-    } catch (JsonException $e) {
-        error_log("Failed to encode state JSON: " . $e->getMessage());
-        return false;
-    } catch (PDOException $e) {
-        error_log("Failed to insert snapshot: " . $e->getMessage());
-        return false;
-    }
+    $stmt = $pdo->prepare("
+        INSERT INTO game_snapshots (game_id, version, state_json)
+        VALUES (:game_id, :version, :state_json)
+        ON DUPLICATE KEY UPDATE
+            state_json = VALUES(state_json),
+            created_at = CURRENT_TIMESTAMP
+    ");
+
+    $stateJson = json_encode($state, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    return $stmt->execute([
+        'game_id' => $gameId,
+        'version' => $version,
+        'state_json' => $stateJson,
+    ]);
 }
 
 /**
@@ -142,20 +132,8 @@ function db_get_snapshot_by_version(PDO $pdo, int $gameId, int $version): ?array
     }
 }
 
-// -----------------------------------------------------------------------------
-// DELETE operations
-// -----------------------------------------------------------------------------
-
-/**
- * Delete all snapshots for a game.
- * Used when match ends to clean up completely.
- * 
- * @param PDO $pdo Database connection
- * @param int $gameId Game ID
- * @return bool True on success, false on failure
- */
 function db_delete_snapshots(PDO $pdo, int $gameId): bool
 {
-    $stmt = $pdo->prepare("DELETE FROM game_snapshots WHERE game_id = :game_id");
+    $stmt = $pdo->prepare('DELETE FROM game_snapshots WHERE game_id = :game_id');
     return $stmt->execute(['game_id' => $gameId]);
 }

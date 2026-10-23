@@ -54,3 +54,11 @@ must not be sent in public WebSocket state projections.
 `GameStateSnapshotCharacterizationTest` fixes the current keys and verifies a
 JSON encode/decode/restore round trip. Phase 0 deliberately does not add schema
 versioning or change persistence behavior.
+
+## Persistence metadata
+
+Persisted snapshots may additionally contain the internal boolean
+`_handBootstrapped`. It records whether the current hand is active so a process
+restart after `hand_end` can safely accept exactly one `next_hand` command.
+This field is not part of `GameState::toArray()` and is excluded from public and
+private WebSocket state projections.

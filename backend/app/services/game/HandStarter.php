@@ -38,6 +38,7 @@ final class HandStarter
         $state->pot            = 0;
         $state->currentBet     = 0;
         $state->lastRaiseSeat  = -1;
+        $state->lastHandResult = null;
 
         // First raise amount = big blind amount
         $state->lastRaiseAmount = $bigBlind;

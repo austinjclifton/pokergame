@@ -43,7 +43,7 @@ final class GameFoldTerminationTest extends BaseDBIntegrationTest
         $gameId = (int) db_create_game($this->pdo, $tableId, 1, 1, 2, 12345);
         $this->assertGreaterThan(0, $gameId);
 
-        $persistence = new GamePersistence($this->pdo, 5);
+        $persistence = new GamePersistence($this->pdo);
         $gameService = new GameService($persistence, 10, 20);
         $gameService->setGameId($gameId);
         $gameService->loadPlayers([

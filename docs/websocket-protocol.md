@@ -43,6 +43,12 @@ uppercase `CHAT`.
 | `chat` | `type`, `msg` |
 | `forfeit` | `type` |
 
+`game_version` is the idempotency key for state-changing commands. A retry with
+the same positive version cannot execute after that version has committed; the
+server responds with `STATE_SYNC` and the authoritative version. For backward
+compatibility, commands that omit the field or send `0` remain accepted, but
+they cannot be durably distinguished from a new identical command.
+
 Game server messages include:
 
 - `STATE_SYNC`: `type`, `reason`, `game_id`, `version`, `state`

@@ -130,6 +130,19 @@ final class GameRecoveryTest extends TestCase
         return $messages[array_key_last($messages)];
     }
 
+    /** @return array<string, mixed>|null */
+    private function lastMessageByEvent(WebSocketTestConnection $conn, string $event): ?array
+    {
+        $match = null;
+        foreach ($conn->sentMessages as $message) {
+            $decoded = json_decode($message, true);
+            if (($decoded['event'] ?? null) === $event) {
+                $match = $decoded;
+            }
+        }
+        return $match;
+    }
+
     /**
      * @return array{0: WebSocketTestConnection, 1: array<string, mixed>}
      */
@@ -328,16 +341,113 @@ final class GameRecoveryTest extends TestCase
         $this->assertNotNull($authoritative);
         $this->assertSame($stalePayload['game_version'] + 1, $authoritative['version']);
 
-        $actingConn->sentMessages = [];
-        $this->gameSocket->onMessage($actingConn, json_encode($stalePayload, JSON_THROW_ON_ERROR));
+        // Simulate acknowledgement loss followed by a process restart and
+        // redelivery of the already committed command.
+        $actingUserId = (int)$actingConn->userCtx['user_id'];
+        $this->gameSocket = new GameSocket($this->pdo);
+        $retriedConn = $this->createConnection(101, $actingUserId);
+        $otherUserId = $actingUserId === $this->userId1 ? $this->userId2 : $this->userId1;
+        $otherConn = $this->createConnection(102, $otherUserId);
+        $this->openAuthenticatedConnection($retriedConn);
+        $this->openAuthenticatedConnection($otherConn);
+        $retriedConn->sentMessages = [];
+        $this->gameSocket->onMessage($retriedConn, json_encode($stalePayload, JSON_THROW_ON_ERROR));
 
-        $resync = $this->lastMessageByType($actingConn, 'STATE_SYNC');
+        $resync = $this->lastMessageByType($retriedConn, 'STATE_SYNC');
         $this->assertNotNull($resync);
         $this->assertSame('version_mismatch', $resync['reason']);
         $this->assertSame($authoritative['version'], $resync['version']);
         $this->assertSame($authoritative, db_get_latest_snapshot($this->pdo, $this->gameId));
         $this->assertSame($authoritative['version'], $this->databaseVersion());
-        $this->assertNull($this->lastMessageByType($actingConn, 'STATE_DIFF'));
+        $this->assertNull($this->lastMessageByType($retriedConn, 'STATE_DIFF'));
+    }
+
+    public function testRestartAfterHandEndCanStartExactlyOneNextHand(): void
+    {
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
+        $this->openAuthenticatedConnection($conn1);
+        $this->openAuthenticatedConnection($conn2);
+
+        [$actingConn, $private] = $this->actingConnection($conn1, $conn2);
+        $fold = $this->validActionPayload($actingConn, $private);
+        $fold['action'] = 'fold';
+        $this->gameSocket->onMessage($actingConn, json_encode($fold, JSON_THROW_ON_ERROR));
+
+        $ended = db_get_latest_snapshot($this->pdo, $this->gameId);
+        $this->assertNotNull($ended);
+        $this->assertFalse($ended['state']['_handBootstrapped']);
+        $this->assertNotNull($ended['state']['lastHandResult']);
+
+        $this->gameSocket = new GameSocket($this->pdo);
+        $reconnected1 = $this->createConnection(101, $this->userId1);
+        $reconnected2 = $this->createConnection(102, $this->userId2);
+        $this->openAuthenticatedConnection($reconnected1);
+        $this->openAuthenticatedConnection($reconnected2);
+        $reconnected1->sentMessages = [];
+        $reconnected2->sentMessages = [];
+
+        $nextHand = [
+            'type' => 'next_hand',
+            'game_version' => $ended['version'],
+        ];
+        $this->gameSocket->onMessage($reconnected1, json_encode($nextHand, JSON_THROW_ON_ERROR));
+
+        $started = $this->lastMessageByType($reconnected1, 'hand_start');
+        $this->assertNotNull($started);
+        $this->assertSame($ended['version'] + 1, $started['version']);
+        $this->assertSame('preflop', $started['state']['phase']);
+        $this->assertSame(30, $started['state']['pot']);
+        $this->assertNull($started['state']['lastHandResult'] ?? null);
+        $this->assertArrayNotHasKey('_handBootstrapped', $started['state']);
+
+        $persisted = db_get_latest_snapshot($this->pdo, $this->gameId);
+        $this->assertSame($started['version'], $persisted['version']);
+        $this->assertTrue($persisted['state']['_handBootstrapped']);
+        $this->assertNull($persisted['state']['lastHandResult']);
+
+        $reconnected1->sentMessages = [];
+        $this->gameSocket->onMessage($reconnected1, json_encode($nextHand, JSON_THROW_ON_ERROR));
+        $resync = $this->lastMessageByType($reconnected1, 'STATE_SYNC');
+        $this->assertNotNull($resync);
+        $this->assertSame('version_mismatch', $resync['reason']);
+        $this->assertSame($started['version'], $resync['version']);
+        $this->assertNull($this->lastMessageByType($reconnected1, 'hand_start'));
+        $this->assertSame($persisted, db_get_latest_snapshot($this->pdo, $this->gameId));
+    }
+
+    public function testForfeitPersistsTerminalCleanupBeforeRedactedBroadcast(): void
+    {
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
+        $this->openAuthenticatedConnection($conn1);
+        $this->openAuthenticatedConnection($conn2);
+
+        $sync = $this->lastMessageByType($conn1, 'STATE_SYNC');
+        $this->assertNotNull($sync);
+        $conn1->sentMessages = [];
+        $this->gameSocket->onMessage($conn1, json_encode([
+            'type' => 'action',
+            'action' => 'forfeit',
+            'amount' => 0,
+            'game_version' => $sync['version'],
+        ], JSON_THROW_ON_ERROR));
+
+        $matchEnd = $this->lastMessageByEvent($conn1, 'match_end');
+        $this->assertNotNull($matchEnd);
+        $this->assertSame('forfeit', $matchEnd['reason']);
+        $this->assertSame([], $matchEnd['board']);
+        foreach ($matchEnd['players'] as $player) {
+            $this->assertSame([], $player['cards']);
+        }
+
+        $this->assertNull(db_get_active_game($this->pdo, $this->tableId));
+        $this->assertNull(db_get_latest_snapshot($this->pdo, $this->gameId));
+        $activeSeats = array_filter(
+            db_get_table_seats($this->pdo, $this->tableId),
+            static fn(array $seat): bool => $seat['left_at'] === null,
+        );
+        $this->assertSame([], $activeSeats);
     }
 
     public function testStaleServerStateCannotOverwriteNewerAuthoritativeSnapshot(): void

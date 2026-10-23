@@ -2,56 +2,68 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../db/game_snapshots.php';
-require_once __DIR__ . '/../../db/game_actions.php'; // only for db_increment_game_version()
-require_once __DIR__ . '/GameState.php';
+require_once __DIR__ . '/../../db/game_actions.php';
 
 final class GamePersistence
 {
     private PDO $pdo;
-    private int $snapshotInterval;
 
-    public function __construct(PDO $pdo, int $snapshotInterval = 5)
+    public function __construct(PDO $pdo)
     {
         $this->pdo = $pdo;
-        $this->snapshotInterval = $snapshotInterval;
     }
 
     /**
-     * NO ACTION LOGGING ANYMORE.
-     * We simply bump the game version (optional) and rely on snapshots only.
+     * Atomically advance the authoritative version and persist its state.
+     * A savepoint keeps this operation atomic when the caller owns a wider
+     * transaction, such as terminal match cleanup.
      */
-    public function bumpVersion(int $gameId, ?int $expectedVersion = null): int
-    {
-        return db_increment_game_version($this->pdo, $gameId, $expectedVersion);
-    }
-
-    /**
-     * Write a snapshot if needed (phase change or every N actions).
-     */
-    public function maybeSnapshot(
+    public function persistTransition(
         int $gameId,
-        int $version,
-        array $state,
-        string $previousPhase,
-        string $currentPhase
-    ): void {
-        if ($previousPhase !== $currentPhase) {
-            db_insert_snapshot($this->pdo, $gameId, $version, $state);
-            return;
-        }
-
-        if ($version % $this->snapshotInterval === 0) {
-            db_insert_snapshot($this->pdo, $gameId, $version, $state);
-        }
-    }
-
-    /**
-     * Write a forced snapshot (e.g., at HAND_START or HAND_END)
-     */
-    public function snapshotForced(int $gameId, int $version, array $state): void
+        int $expectedVersion,
+        array $state
+    ): int
     {
-        if (!db_insert_snapshot($this->pdo, $gameId, $version, $state)) {
-            throw new RuntimeException("Failed to persist snapshot for game {$gameId} at version {$version}");
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) {
+            $this->pdo->beginTransaction();
+        } else {
+            $this->pdo->exec('SAVEPOINT game_transition');
+        }
+
+        try {
+            $version = db_increment_game_version($this->pdo, $gameId, $expectedVersion);
+            try {
+                $saved = db_insert_snapshot($this->pdo, $gameId, $version, $state);
+            } catch (\Throwable $e) {
+                throw new RuntimeException(
+                    "Failed to persist snapshot for game {$gameId} at version {$version}",
+                    0,
+                    $e,
+                );
+            }
+            if (!$saved) {
+                throw new RuntimeException("Failed to persist snapshot for game {$gameId} at version {$version}");
+            }
+
+            if ($ownsTransaction) {
+                if (!$this->pdo->commit()) {
+                    throw new RuntimeException('Failed to commit game transition');
+                }
+            } else {
+                $this->pdo->exec('RELEASE SAVEPOINT game_transition');
+            }
+
+            return $version;
+        } catch (\Throwable $e) {
+            if ($ownsTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            } elseif (!$ownsTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->exec('ROLLBACK TO SAVEPOINT game_transition');
+                $this->pdo->exec('RELEASE SAVEPOINT game_transition');
+            }
+
+            throw $e;
         }
     }
 
@@ -61,13 +73,5 @@ final class GamePersistence
     public function loadLatest(int $gameId): ?array
     {
         return db_get_latest_snapshot($this->pdo, $gameId);
-    }
-
-    /**
-     * Convert GameState object to array
-     */
-    public function snapshot(GameState $state): array
-    {
-        return $state->toArray();
     }
 }
