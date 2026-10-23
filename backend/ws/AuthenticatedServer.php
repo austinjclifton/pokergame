@@ -10,6 +10,7 @@ require_once __DIR__ . '/../app/db/sessions.php';
 require_once __DIR__ . '/../app/services/NonceService.php';
 require_once __DIR__ . '/../lib/WebSocketLog.php';
 require_once __DIR__ . '/../lib/WebSocketJson.php';
+require_once __DIR__ . '/../lib/TokenBucketRateLimiter.php';
 
 /**
  * AuthenticatedServer
@@ -21,6 +22,16 @@ require_once __DIR__ . '/../lib/WebSocketJson.php';
  * allowed browser Origin. Persistent session cookies are never accepted here.
  */
 final class AuthenticatedServer implements MessageComponentInterface {
+    /** @var array<string, array{ts:float,tokens:float}> */
+    private static array $accountRateBuckets = [];
+
+    /** @var array<string, array{capacity:float,refill:float}> */
+    private const ACCOUNT_RATE_LIMITS = [
+        'game' => ['capacity' => 20.0, 'refill' => 4.0],
+        'lobby' => ['capacity' => 10.0, 'refill' => 3.0],
+        'generic' => ['capacity' => 10.0, 'refill' => 2.0],
+    ];
+
     private PDO $pdo;
     private MessageComponentInterface $inner;
     private string $channelType;
@@ -132,6 +143,7 @@ final class AuthenticatedServer implements MessageComponentInterface {
                     $this->inner->onAuthenticated($conn);
                 } catch (Throwable $e) {
                     WebSocketLog::error('AuthenticatedServer', 'onAuthenticated callback failed: ' . $e->getMessage());
+                    $this->sendErrorAndClose($conn, 'connection_failed');
                 }
             }
 
@@ -144,6 +156,11 @@ final class AuthenticatedServer implements MessageComponentInterface {
     public function onMessage(ConnectionInterface $from, $msg): void {
         if (!isset($from->userCtx) || !is_array($from->userCtx)) {
             $this->rejectUnauthorized($from);
+            return;
+        }
+
+        if (!$this->accountRateAllow($from->userCtx)) {
+            $this->sendError($from, 'rate_limited');
             return;
         }
 
@@ -185,6 +202,27 @@ final class AuthenticatedServer implements MessageComponentInterface {
 
     private function rejectUnauthorized(ConnectionInterface $conn): void {
         $this->sendErrorAndClose($conn, 'unauthorized');
+    }
+
+    /** @param array<string, mixed> $userCtx */
+    private function accountRateAllow(array $userCtx): bool {
+        $userId = (int) ($userCtx['user_id'] ?? 0);
+        if ($userId <= 0) {
+            return false;
+        }
+
+        $limits = self::ACCOUNT_RATE_LIMITS[$this->channelType]
+            ?? self::ACCOUNT_RATE_LIMITS['generic'];
+        $key = $this->channelType . ':' . $userId;
+        $state = self::$accountRateBuckets[$key] ?? null;
+        $allowed = TokenBucketRateLimiter::allow(
+            $state,
+            $limits['capacity'],
+            $limits['refill'],
+        );
+        self::$accountRateBuckets[$key] = $state;
+
+        return $allowed;
     }
 
     private function sendErrorAndClose(ConnectionInterface $conn, string $error): void {

@@ -238,6 +238,7 @@ POKER_COMPOSER="$(command -v composer)"
 
 cd ../frontend
 npm audit --package-lock-only --audit-level=low
+npm test
 npm run lint
 npm run build
 ```

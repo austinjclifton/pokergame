@@ -426,7 +426,7 @@ final class AuthenticatedServerTest extends TestCase
         });
     }
 
-    public function testOnOpenSwallowsOnAuthenticatedExceptionAfterSuccessfulOpen(): void
+    public function testOnOpenClosesWhenAuthenticatedInitializationFails(): void
     {
         $user = $this->createTestUser('inner_auth_error_user');
         $sessionId = $this->createTestSession($user['id']);
@@ -438,8 +438,8 @@ final class AuthenticatedServerTest extends TestCase
 
             $this->authenticatedServer->onOpen($conn);
 
-            $this->assertFalse($conn->isClosed);
-            $this->assertSame([], $conn->sentMessages);
+            $this->assertTrue($conn->isClosed);
+            $this->assertLastError($conn, 'connection_failed');
             $this->assertSame(['onOpen', 'onAuthenticated'], $this->inner->eventNames());
         });
     }
@@ -467,6 +467,31 @@ final class AuthenticatedServerTest extends TestCase
         $this->assertFalse($conn->isClosed);
         $this->assertSame([], $conn->sentMessages);
         $this->assertSame(['onMessage'], $this->inner->eventNames());
+    }
+
+    public function testGameMessagesShareRateLimitAcrossConnectionsForOneAccount(): void
+    {
+        $user = $this->createTestUser('shared_rate_user');
+        $sessionId = $this->createTestSession($user['id']);
+        $first = $this->createConnection();
+        $second = $this->createConnection();
+        $third = $this->createConnection();
+        $context = ['user_id' => $user['id'], 'session_id' => $sessionId];
+        $first->userCtx = $context;
+        $second->userCtx = $context;
+        $third->userCtx = $context;
+        $server = $this->createServer('game');
+
+        for ($i = 0; $i < 20; $i++) {
+            $connection = $i % 2 === 0 ? $first : $second;
+            $server->onMessage($connection, '{"type":"ping"}');
+        }
+
+        $server->onMessage($third, '{"type":"ping"}');
+
+        $this->assertCount(20, $this->inner->events);
+        $this->assertLastError($third, 'rate_limited');
+        $this->assertFalse($third->isClosed);
     }
 
     public function testOnMessageSwallowsInnerExceptions(): void

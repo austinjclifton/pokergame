@@ -31,7 +31,13 @@ An authenticated HTTP client requests a 30-second WebSocket token from
 an exact origin listed in `WS_ALLOWED_ORIGINS`. The token is consumed under a
 database row lock before the connection reaches a channel handler. Lobby
 cookie fallback no longer exists. Revoking the parent session causes the next
-message on an established socket to be rejected.
+message on an established socket to be rejected. Authenticated messages also
+consume a per-account, per-channel token bucket shared by every connection in
+the WebSocket process, in addition to each channel's connection-level limit.
+This prevents one account from multiplying its allowance with extra sockets.
+The account bucket is intentionally process-local; deployments that run more
+than one WebSocket process need a shared limiter to enforce one aggregate
+allowance across processes.
 
 ## Nonces and throttling
 

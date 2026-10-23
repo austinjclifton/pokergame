@@ -121,6 +121,9 @@ jobs:
       - name: Audit frontend dependencies
         run: npm audit --package-lock-only --audit-level=low
 
+      - name: Run frontend tests
+        run: npm test
+
       - name: Run ESLint
         run: npm run lint
 

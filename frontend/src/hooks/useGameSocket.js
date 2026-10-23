@@ -442,6 +442,7 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
     let ws;
     let pingInterval;
     let reconnectTimeout;
+    let handAdvanceTimeout;
 
     const initialState = createInitialGameState();
     matchEndedRef.current = false;
@@ -460,11 +461,15 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
       const s = msg.state || {};
       const version = msg.version ?? 0;
 
-      setGameState((prev) => ({
-        ...projectPublicState(prev, s, version, true, []),
-        connected: true,
-        reconnecting: false,
-      }));
+      setGameState((prev) => (
+        version < prev.gameVersion
+          ? prev
+          : {
+              ...projectPublicState(prev, s, version, true, []),
+              connected: true,
+              reconnecting: false,
+            }
+      ));
     };
 
     // -------------------------------------------------------------------------
@@ -476,7 +481,11 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
       const s = msg.state || {};
       const version = msg.version ?? null;
 
-      setGameState((prev) => projectPublicState(prev, s, version));
+      setGameState((prev) => (
+        version !== null && version <= prev.gameVersion
+          ? prev
+          : projectPublicState(prev, s, version)
+      ));
     };
 
     // -------------------------------------------------------------------------
@@ -513,7 +522,8 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
       if (matchEndedRef.current) return;
 
       // Auto-advance after delay
-      setTimeout(() => {
+      if (handAdvanceTimeout) clearTimeout(handAdvanceTimeout);
+      handAdvanceTimeout = setTimeout(() => {
         if (!matchEndedRef.current) {
           const wsCurrent = socketRef.current;
           if (wsCurrent && wsCurrent.readyState === WebSocket.OPEN) {
@@ -534,16 +544,22 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
     const handleHandStart = (msg) => {
       if (matchEndedRef.current) return;
 
-      // Reset last summary for the new hand
-      lastHandSummaryRef.current = null;
-
       const s = msg.state || {};
       const version = msg.version ?? null;
+      if (version !== null && version < stateRef.current.gameVersion) return;
 
-      setGameState((prev) => ({
-        ...projectPublicState(prev, s, version, true),
-        legalActions: [],
-      }));
+      // Reset last summary only after accepting the new hand.
+      lastHandSummaryRef.current = null;
+
+      setGameState((prev) => (
+        version !== null && version < prev.gameVersion
+          ? prev
+          : {
+              ...projectPublicState(prev, s, version, true),
+              legalActions: [],
+              handSummary: null,
+            }
+      ));
     };
 
     // -------------------------------------------------------------------------
@@ -552,6 +568,7 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
     const handleMatchEnd = (msg) => {
       // Freeze all further activity
       matchEndedRef.current = true;
+      if (handAdvanceTimeout) clearTimeout(handAdvanceTimeout);
     
       const matchReason = msg.reason || null;
       const currentState = stateRef.current;
@@ -673,6 +690,18 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
     // -------------------------------------------------------------------------
     // Connection init + reconnection logic
     // -------------------------------------------------------------------------
+    const scheduleReconnect = () => {
+      if (!stateRef.current.isMounted) return;
+
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      setGameState((prev) => ({
+        ...prev,
+        connected: false,
+        reconnecting: true,
+      }));
+      reconnectTimeout = setTimeout(init, 3000);
+    };
+
     const init = async () => {
       const now = Date.now();
       if (stateRef.current.isConnecting || !stateRef.current.isMounted) return;
@@ -801,14 +830,7 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
             return;
           }
 
-          if (stateRef.current.isMounted) {
-            setGameState((prev) => ({
-              ...prev,
-              connected: false,
-              reconnecting: true,
-            }));
-            reconnectTimeout = setTimeout(init, 3000);
-          }
+          scheduleReconnect();
         };
 
         ws.onerror = (error) => {
@@ -830,11 +852,7 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
         stateRef.current.isConnecting = false;
         onErrorRef.current?.(err.message || "Connection failed");
 
-        setGameState((prev) => ({ ...prev, reconnecting: true }));
-
-        if (stateRef.current.isMounted) {
-          reconnectTimeout = setTimeout(init, 3000);
-        }
+        scheduleReconnect();
       }
     };
 
@@ -845,9 +863,14 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
 
       if (pingInterval) clearInterval(pingInterval);
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (handAdvanceTimeout) clearTimeout(handAdvanceTimeout);
 
       if (ws) {
         try {
+          ws.onopen = null;
+          ws.onmessage = null;
+          ws.onclose = null;
+          ws.onerror = null;
           ws.close(1000, "Component unmount");
         } catch {
           // ignore
