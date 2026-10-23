@@ -16,10 +16,6 @@ use Ratchet\ConnectionInterface;
 use React\EventLoop\LoopInterface;
 
 require_once __DIR__ . '/../app/services/game/GameService.php';
-require_once __DIR__ . '/../app/services/game/rules/GameTypes.php';
-require_once __DIR__ . '/../app/services/game/cards/DealerService.php';
-require_once __DIR__ . '/../app/services/game/cards/HandEvaluator.php';
-require_once __DIR__ . '/../app/services/game/GamePersistence.php';
 require_once __DIR__ . '/../app/services/SubscriptionService.php';
 require_once __DIR__ . '/../app/services/SocketPresenceService.php';
 require_once __DIR__ . '/LobbySocket.php';
@@ -58,9 +54,6 @@ final class GameSocket implements MessageComponentInterface
     // State
     // -------------------------------------------------------------------------
 
-    /** @var \SplObjectStorage<ConnectionInterface, null> */
-    protected \SplObjectStorage $clients;
-
     protected PDO $pdo;
     protected SubscriptionService $subscriptionService;
     protected SocketPresenceService $presenceService;
@@ -77,9 +70,6 @@ final class GameSocket implements MessageComponentInterface
 
     /** @var array<int, GameService> table_id => GameService */
     protected array $gameServices = [];
-
-    /** @var array<int, list<ConnectionInterface>> table_id => list of conns */
-    protected array $tableConnections = [];
 
     protected array $tableSeats = [];
 
@@ -104,18 +94,13 @@ final class GameSocket implements MessageComponentInterface
     /** @var array<int, int> table_id => game_id */
     protected array $tableIdToGameId = [];
 
-    /** @var array<int, true> table_id => rebuilding flag */
-    protected array $rebuildingTables = [];
-
     /** @var array<int, bool> table_id => bootstrapped flag */
     protected array $tableBootstrapped = [];
 
     private bool $usesPeriodicDisconnectSweep = false;
-    private ?bool $gameVersionColumnExists = null;
 
     public function __construct(PDO $pdo, ?LobbySocket $lobbySocket = null, ?LoopInterface $loop = null)
     {
-        $this->clients = new \SplObjectStorage();
         $this->pdo = $pdo;
         $this->subscriptionService = new SubscriptionService($pdo);
         $this->presenceService = new SocketPresenceService($pdo);
@@ -134,8 +119,7 @@ final class GameSocket implements MessageComponentInterface
 
     public function onOpen(ConnectionInterface $conn): void
     {
-        // AuthenticatedServer will call $this->onAuthenticated($conn) after attaching userCtx.
-        $this->clients->attach($conn);
+        // AuthenticatedServer calls onAuthenticated() after attaching userCtx.
     }
 
     /**
@@ -198,7 +182,6 @@ final class GameSocket implements MessageComponentInterface
             ];
             $this->subscriptionService->register($uid, (string)$rid, 'game', $gameId);
 
-            $this->tableConnections[$tableId][] = $conn;
             $this->userConnections[$tableId][$uid][] = $conn;
             $this->tableSeats[$tableId][$seat] = ['user_id'=>$uid,'username'=>$uname];
 
@@ -227,7 +210,7 @@ final class GameSocket implements MessageComponentInterface
                 $gameId,
                 isset($activeGame['deck_seed']) ? (int)$activeGame['deck_seed'] : null
             );
-            $this->syncGameState($conn, $tableId, $seat, $gameId);
+            $this->sendStateSync($conn, $tableId, $seat);
             $this->sendChatHistory($conn, $gameId);
 
             // --- only broadcast if truly new user, not quick reconnect ---
@@ -292,7 +275,6 @@ final class GameSocket implements MessageComponentInterface
 
         // If we never registered, just drop
         if (!$info) {
-            $this->clients->detach($conn);
             return;
         }
 
@@ -405,17 +387,11 @@ final class GameSocket implements MessageComponentInterface
                 return;
             }
     
-            $startedTransaction = false;
-            if (!$this->pdo->inTransaction()) {
-                $this->pdo->beginTransaction();
-                $startedTransaction = true;
-            }
+            $startedTransaction = $this->beginTransactionIfNeeded();
     
             $result = $gameService->applyAction($seat, $actionStr, $amount);
             if (!($result['ok'] ?? false)) {
-                if ($startedTransaction && $this->pdo->inTransaction()) {
-                    $this->pdo->rollBack();
-                }
+                $this->finishTransaction($startedTransaction, false);
                 $gameService->restoreSnapshot($stateBefore, $versionBefore);
                 $this->sendError($from, 'action_failed', (string)($result['message'] ?? ''));
                 return;
@@ -432,20 +408,16 @@ final class GameSocket implements MessageComponentInterface
             // If the entire MATCH is over (one player busted), end the match now
             if ($matchEnded) {
                 if (!$this->hasValidMatchEndPlayers($winner, $loser, $tableId, 'Match end detected', $from)) {
-                    if ($startedTransaction && $this->pdo->inTransaction()) {
-                        $this->pdo->rollBack();
-                    }
+                    $this->finishTransaction($startedTransaction, false);
                     $gameService->restoreSnapshot($stateBefore, $versionBefore);
                     return;
                 }
 
                 $gameId = $gameService->getGameId();
-                $stateSnapshot = $this->resolveResultStateSnapshot($result, $gameService);
+                $stateSnapshot = $result['state'] ?? $gameService->getSnapshot();
                 $this->persistMatchEnd($tableId, $gameId);
 
-                if ($startedTransaction && $this->pdo->inTransaction() && !$this->pdo->commit()) {
-                    throw new RuntimeException('Failed to commit match end');
-                }
+                $this->finishTransaction($startedTransaction, true, 'Failed to commit match end');
 
                 $this->publishMatchEnd(
                     $tableId,
@@ -471,19 +443,13 @@ final class GameSocket implements MessageComponentInterface
                 return; // DO NOT send further state; table is done
             }
 
-            if ($startedTransaction && $this->pdo->inTransaction() && !$this->pdo->commit()) {
-                throw new RuntimeException('Failed to commit game action');
-            }
+            $this->finishTransaction($startedTransaction, true, 'Failed to commit game action');
 
-            $gameId = $gameService->getGameId();
-            
             // If the hand ended, always broadcast the hand summary for the overlay
             if ($handEnded && $handSummary !== null) {
-                // Enrich hand summary with usernames from tableSeats cache
-                $enrichedSummary = $this->enrichHandSummaryWithUsernames($handSummary, $tableId);
                 $this->broadcast($tableId, [
                     'event'   => 'hand_end',
-                    'summary' => $enrichedSummary,
+                    'summary' => $this->buildPublicHandSummary($handSummary, $tableId),
                 ]);
             }
                 
@@ -494,28 +460,16 @@ final class GameSocket implements MessageComponentInterface
             // Non-looped test instances still rely on a synchronous fallback sweep.
             $this->flushPendingDisconnectsFallback();
     
-            // Send private to acting player (redundant but immediate)
-            $privateState = $this->buildPrivateState($stateToBroadcast, $seat, $gameId ?? 0);
-            $this->sendJson($from, [
-                'type'  => 'STATE_PRIVATE',
-                'state' => $privateState,
-            ]);
         } catch (GameVersionConflictException $e) {
-            if (isset($startedTransaction) && $startedTransaction && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
+            $this->finishTransaction($startedTransaction ?? false, false);
             $this->restoreAfterFailedCommand($gameService, $stateBefore ?? [], $versionBefore ?? 0);
             $this->sendStateSync($from, $tableId, $seat, 'version_mismatch');
         } catch (\ValueError $e) {
-            if (isset($startedTransaction) && $startedTransaction && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
+            $this->finishTransaction($startedTransaction ?? false, false);
             $this->restoreAfterFailedCommand($gameService, $stateBefore ?? [], $versionBefore ?? 0);
             $this->sendError($from, 'invalid_action');
         } catch (\Throwable $e) {
-            if (isset($startedTransaction) && $startedTransaction && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
+            $this->finishTransaction($startedTransaction ?? false, false);
             $this->restoreAfterFailedCommand($gameService, $stateBefore ?? [], $versionBefore ?? 0);
             WebSocketLog::error('GameSocket', 'Action handling failed: ' . $e->getMessage());
             $this->sendError($from, 'server_error');
@@ -549,11 +503,7 @@ final class GameSocket implements MessageComponentInterface
                 ? $gameService->getVersion()
                 : 0;
 
-            $startedTransaction = false;
-            if (!$this->pdo->inTransaction()) {
-                $this->pdo->beginTransaction();
-                $startedTransaction = true;
-            }
+            $startedTransaction = $this->beginTransactionIfNeeded();
     
             $result = $gameService->startHand(); // now may return matchEnded
     
@@ -566,20 +516,16 @@ final class GameSocket implements MessageComponentInterface
                 $reason = $result['reason'] ?? null;
                 
                 if (!$this->hasValidMatchEndPlayers($winner, $loser, $tableId, 'Next-hand match end', $from)) {
-                    if ($startedTransaction && $this->pdo->inTransaction()) {
-                        $this->pdo->rollBack();
-                    }
+                    $this->finishTransaction($startedTransaction, false);
                     $gameService->restoreSnapshot($stateBefore, $versionBefore);
                     return;
                 }
                 
                 $gameId = $gameService->getGameId();
-                $stateSnapshot = $this->resolveResultStateSnapshot($result, $gameService);
+                $stateSnapshot = $result['state'] ?? $gameService->getSnapshot();
                 $this->persistMatchEnd($tableId, $gameId);
 
-                if ($startedTransaction && $this->pdo->inTransaction() && !$this->pdo->commit()) {
-                    throw new RuntimeException('Failed to commit match end');
-                }
+                $this->finishTransaction($startedTransaction, true, 'Failed to commit match end');
 
                 $this->publishMatchEnd(
                     $tableId,
@@ -596,14 +542,11 @@ final class GameSocket implements MessageComponentInterface
                 return;
             }
 
-            if ($startedTransaction && $this->pdo->inTransaction() && !$this->pdo->commit()) {
-                throw new RuntimeException('Failed to commit next hand');
-            }
+            $this->finishTransaction($startedTransaction, true, 'Failed to commit next hand');
 
             // ============================
             // 2. NORMAL NEW HAND START
             // ============================
-            $gameId = $gameService->getGameId();
             $state = $result['state'] ?? $gameService->getSnapshot();
 
             if ($gameService->getVersion() !== $versionBefore) {
@@ -614,36 +557,14 @@ final class GameSocket implements MessageComponentInterface
                 ]);
             }
 
-            // Send private cards to each player
-            foreach ($this->userConnections[$tableId] ?? [] as $uid => $conns) {
-                if (empty($conns)) continue;
-    
-                $firstRid = (int)$conns[0]->resourceId;
-                $playerInfo = $this->connInfo[$firstRid] ?? null;
-                if (!$playerInfo) continue;
-    
-                $seat = (int)$playerInfo['seat'];
-                $privateState = $this->buildPrivateState($state, $seat, $gameId ?? 0);
-    
-                foreach ($conns as $conn) {
-                    $this->sendJson($conn, [
-                            'type'  => 'STATE_PRIVATE',
-                            'seat'  => $seat,
-                            'state' => $privateState,
-                        ]);
-                }
-            }
+            $this->sendPrivateStateUpdates($tableId, $state);
     
         } catch (GameVersionConflictException $e) {
-            if (isset($startedTransaction) && $startedTransaction && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
+            $this->finishTransaction($startedTransaction ?? false, false);
             $this->restoreAfterFailedCommand($gameService, $stateBefore ?? [], $versionBefore ?? 0);
             $this->sendStateSync($from, $tableId, (int)$info['seat'], 'version_mismatch');
         } catch (\Throwable $e) {
-            if (isset($startedTransaction) && $startedTransaction && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
+            $this->finishTransaction($startedTransaction ?? false, false);
             $this->restoreAfterFailedCommand($gameService, $stateBefore ?? [], $versionBefore ?? 0);
             WebSocketLog::error('GameSocket', 'Next hand failed: ' . $e->getMessage());
             $this->sendError($from, 'server_error');
@@ -705,61 +626,9 @@ final class GameSocket implements MessageComponentInterface
         return false;
     }
 
-    /**
-     * @param array<string, mixed> $result
-     * @return array<string, mixed>
-     */
-    private function resolveResultStateSnapshot(array $result, object $service)
-    {
-        return isset($result['state']) ? $result['state'] : $service->getSnapshot();
-    }
-
     // -------------------------------------------------------------------------
     // State synchronization
     // -------------------------------------------------------------------------
-
-    private function syncGameState(
-        ConnectionInterface $conn,
-        int $tableId,
-        int $seat,
-        ?int $gameId
-    ): void {
-        if (!$gameId) {
-            $this->sendStateSync($conn, $tableId, $seat, 'connect');
-            return;
-        }
-
-        $gameService = $this->gameServices[$tableId] ?? null;
-        if (!$gameService) {
-            $this->sendStateSync($conn, $tableId, $seat, 'connect');
-            return;
-        }
-
-        // Rebuild gate: only rebuild if service is behind DB AND there are NO active connections
-        // This prevents rebuilds during refreshes when other players are still connected
-        $dbVersion      = $this->getGameVersion($gameId);
-        $serviceVersion = $gameService->getVersion();
-
-        if ($serviceVersion <= 0 || $dbVersion > $serviceVersion) {
-            // CRITICAL: Check connection count INSIDE this method to avoid race conditions
-            // Use userConnections to count unique users, not just connections (more accurate)
-            $activeUserCount = isset($this->userConnections[$tableId]) 
-                ? count($this->userConnections[$tableId]) 
-                : 0;
-            $activeConnectionCount = count($this->tableConnections[$tableId] ?? []);
-            
-            // Only rebuild when there are truly NO active connections (table is completely empty)
-            // This ensures refreshes never trigger rebuilds that affect other players
-            if ($activeConnectionCount === 0 && $activeUserCount === 0 && !isset($this->rebuildingTables[$tableId])) {
-                $this->rebuildFromDatabase($tableId, $gameId, $gameService);
-            } elseif ($activeConnectionCount > 0 || $activeUserCount > 0) {
-                // Log when we skip rebuild due to active connections (version mismatch exists but table has players)
-                WebSocketLog::debug('GameSocket', "Skipping rebuild for table #{$tableId} ({$activeUserCount} user(s), {$activeConnectionCount} conn(s))");
-            }
-        }
-
-        $this->sendStateSync($conn, $tableId, $seat, 'connect');
-    }
 
     /**
      * Rebuild game state from database (snapshot + actions).
@@ -768,46 +637,22 @@ final class GameSocket implements MessageComponentInterface
      */
     private function rebuildFromDatabase(int $tableId, int $gameId, GameService $gameService): bool
     {
-        // Abort if players appeared during rebuild
-        $activeConnectionCount = count($this->tableConnections[$tableId] ?? []);
-        $activeUserCount = isset($this->userConnections[$tableId])
-            ? count($this->userConnections[$tableId])
-            : 0;
-    
-        if ($activeConnectionCount > 0 || $activeUserCount > 0) {
+        if (!empty($this->userConnections[$tableId])) {
             WebSocketLog::debug('GameSocket', "Aborting rebuild for table #{$tableId} because connections appeared");
             return false;
         }
-    
-        $this->rebuildingTables[$tableId] = true;
-    
-        try {
-            // Snapshot-only restore
-            $snapshot = db_get_latest_snapshot($this->pdo, $gameId);
-    
-            if ($snapshot && !empty($snapshot['state'])) {
-                $state = $snapshot['state'];
-                if (
-                    is_array($state)
-                    && isset($state['state'])
-                    && is_array($state['state'])
-                    && !isset($state['phase'])
-                ) {
-                    $state = $state['state'];
-                }
 
-                $gameService->restoreSnapshot($state, (int)($snapshot['version'] ?? 0));
+        try {
+            if ($gameService->restoreLatestSnapshot()) {
                 WebSocketLog::debug('GameSocket', "Snapshot restored for table #{$tableId}");
                 return true;
-            } else {
-                WebSocketLog::debug('GameSocket', "No snapshot found for game #{$gameId}; skipping rebuild");
-                return false;
             }
+
+            WebSocketLog::debug('GameSocket', "No snapshot found for game #{$gameId}; skipping rebuild");
+            return false;
         } catch (\Throwable $e) {
             WebSocketLog::error('GameSocket', 'Rebuild failed: ' . $e->getMessage());
             throw $e;
-        } finally {
-            unset($this->rebuildingTables[$tableId]);
         }
     }
 
@@ -851,8 +696,34 @@ final class GameSocket implements MessageComponentInterface
             'type'    => 'STATE_PRIVATE',
             'game_id' => $gameId,
             'seat'    => $seat,
-            'state'   => $this->buildPrivateState($snapshot, $seat, $gameId),
+            'state'   => $this->buildPrivateState($snapshot, $seat, $tableId),
         ]);
+    }
+
+    private function beginTransactionIfNeeded(): bool
+    {
+        if ($this->pdo->inTransaction()) {
+            return false;
+        }
+
+        $this->pdo->beginTransaction();
+        return true;
+    }
+
+    private function finishTransaction(bool $started, bool $commit, string $failure = ''): void
+    {
+        if (!$started || !$this->pdo->inTransaction()) {
+            return;
+        }
+
+        if (!$commit) {
+            $this->pdo->rollBack();
+            return;
+        }
+
+        if (!$this->pdo->commit()) {
+            throw new RuntimeException($failure);
+        }
     }
 
     /** @param array<string, mixed> $stateBefore */
@@ -876,43 +747,40 @@ final class GameSocket implements MessageComponentInterface
 
     private function broadcastStateUpdate(int $tableId, array $state, int $version): void
     {
-        if (empty($this->userConnections[$tableId])) {
-            return;
-        }
+        $this->broadcast($tableId, [
+            'type' => 'STATE_DIFF',
+            'game_id' => $this->tableIdToGameId[$tableId] ?? 0,
+            'version' => $version,
+            'state' => $this->buildPublicState($state, $tableId),
+        ]);
+        $this->sendPrivateStateUpdates($tableId, $state);
+    }
 
-        $gameId      = $this->tableIdToGameId[$tableId] ?? 0;
-        $publicState = $this->buildPublicState($state, $tableId);
+    private function sendPrivateStateUpdates(int $tableId, array $state): void
+    {
+        $gameId = $this->tableIdToGameId[$tableId] ?? 0;
 
-        // MULTI-CONNECTION: Broadcast to all connections for each user
-        foreach ($this->userConnections[$tableId] as $uid => $conns) {
+        foreach ($this->userConnections[$tableId] ?? [] as $conns) {
             if (empty($conns)) {
                 continue;
             }
 
-            // Get seat from first connection (all connections for same user have same seat)
             $firstRid = (int)$conns[0]->resourceId;
-            $info     = $this->connInfo[$firstRid] ?? null;
+            $info = $this->connInfo[$firstRid] ?? null;
             if (!$info) {
                 continue;
             }
 
             $seat = (int)$info['seat'];
+            $message = [
+                'type' => 'STATE_PRIVATE',
+                'game_id' => $gameId,
+                'seat' => $seat,
+                'state' => $this->buildPrivateState($state, $seat, $tableId),
+            ];
 
-            // Send to all connections for this user
             foreach ($conns as $conn) {
-                $this->sendJson($conn, [
-                        'type'    => 'STATE_DIFF',
-                        'game_id' => $gameId,
-                        'version' => $version,
-                        'state'   => $publicState,
-                    ]);
-
-                $this->sendJson($conn, [
-                        'type'    => 'STATE_PRIVATE',
-                        'game_id' => $gameId,
-                        'seat'    => $seat,
-                        'state'   => $this->buildPrivateState($state, $seat, $gameId),
-                    ]);
+                $this->sendJson($conn, $message);
             }
         }
     }
@@ -958,17 +826,12 @@ final class GameSocket implements MessageComponentInterface
         return $public;
     }
 
-    /**
-     * Enrich hand summary with usernames from tableSeats cache.
-     * Adds 'username' field to each player in the summary's players array.
-     */
-    private function enrichHandSummaryWithUsernames(array $summary, int $tableId): array
+    private function buildPublicHandSummary(array $summary, int $tableId): array
     {
         if (!isset($summary['players']) || !is_array($summary['players'])) {
             return $summary;
         }
 
-        // Get username mapping from cached table seats
         $seatUsernames = [];
         if (isset($this->tableSeats[$tableId])) {
             foreach ($this->tableSeats[$tableId] as $seatNo => $data) {
@@ -976,12 +839,14 @@ final class GameSocket implements MessageComponentInterface
             }
         }
 
-        // Add usernames to each player in the summary
         $enrichedPlayers = [];
         foreach ($summary['players'] as $seat => $player) {
             $seatNum = is_numeric($seat) ? (int)$seat : (int)($player['seat'] ?? $seat);
+            $showCards = ($summary['reason'] ?? null) === 'showdown'
+                && !($player['folded'] ?? false);
             $enrichedPlayers[$seat] = array_merge($player, [
                 'username' => $seatUsernames[$seatNum] ?? "Seat{$seatNum}",
+                'cards' => $showCards ? ($player['cards'] ?? []) : [],
             ]);
         }
 
@@ -989,13 +854,12 @@ final class GameSocket implements MessageComponentInterface
         return $summary;
     }
 
-    private function buildPrivateState(array $state, int $seat, int $gameId): array
+    private function buildPrivateState(array $state, int $seat, int $tableId): array
     {
         $cards = [];
         $legal = [];
 
-        $tableId = array_search($gameId, $this->tableIdToGameId ?? [], true);
-        if ($tableId !== false && isset($this->gameServices[$tableId])) {
+        if (isset($this->gameServices[$tableId])) {
             $svc = $this->gameServices[$tableId];
             $cards = $svc->getSeatCards($seat);
             $legal = $svc->getLegalActionsForSeat($seat);
@@ -1024,9 +888,6 @@ final class GameSocket implements MessageComponentInterface
         $rid  = (int)$conn->resourceId;
         $info = $this->connInfo[$rid] ?? null;
 
-        // Always detach from SplObjectStorage
-        $this->clients->detach($conn);
-
         if (!$info) {
             return;
         }
@@ -1038,17 +899,6 @@ final class GameSocket implements MessageComponentInterface
         }
 
         $uid = (int)$info['user_id'];
-
-        // Remove from tableConnections
-        if (isset($this->tableConnections[$tableId])) {
-            $this->tableConnections[$tableId] = array_values(array_filter(
-                $this->tableConnections[$tableId],
-                static fn($c) => $c !== $conn
-            ));
-            if (empty($this->tableConnections[$tableId])) {
-                unset($this->tableConnections[$tableId]);
-            }
-        }
 
         // MULTI-CONNECTION: Remove from array of connections for this user
         if (isset($this->userConnections[$tableId][$uid])) {
@@ -1204,35 +1054,6 @@ final class GameSocket implements MessageComponentInterface
         ];
     }
 
-    private function getGameVersion(int $gameId): int
-    {
-        if ($this->gameVersionColumnExists()) {
-            $statement = $this->pdo->prepare("SELECT version FROM games WHERE id = :game_id LIMIT 1");
-            $statement->execute(['game_id' => $gameId]);
-            $row = $statement->fetch(PDO::FETCH_ASSOC);
-            return (int)($row['version'] ?? 0);
-        }
-
-        return 0;
-    }
-
-    private function gameVersionColumnExists(): bool
-    {
-        if ($this->gameVersionColumnExists !== null) {
-            return $this->gameVersionColumnExists;
-        }
-
-        try {
-            $statement = $this->pdo->query("SHOW COLUMNS FROM games LIKE 'version'");
-            $this->gameVersionColumnExists = $statement !== false && $statement->rowCount() > 0;
-        } catch (\Throwable $e) {
-            WebSocketLog::warn('GameSocket', 'Version-column detection failed: ' . $e->getMessage());
-            $this->gameVersionColumnExists = false;
-        }
-
-        return $this->gameVersionColumnExists;
-    }
-
     private function rateAllow(int $rid): bool
     {
         if (!isset($this->connInfo[$rid])) {
@@ -1346,7 +1167,7 @@ final class GameSocket implements MessageComponentInterface
      * Returns the current game_id.
      * 
      * HARDENED: Only touches $gameServices and $tableIdToGameId arrays.
-     * Never modifies connection tracking arrays ($tableConnections, $userConnections).
+     * Never modifies connection tracking arrays.
      */
     private function ensureGameService(int $tableId, int $dbGameId): int
     {
@@ -1436,12 +1257,13 @@ final class GameSocket implements MessageComponentInterface
     ): void {
         $board = $reason === 'forfeit' ? [] : ($stateSnapshot['board'] ?? []);
         $players = $this->buildMatchEndPlayerData($stateSnapshot['players'] ?? []);
-        if ($reason === 'forfeit') {
-            foreach ($players as &$player) {
+        $handReason = $stateSnapshot['lastHandResult']['reason'] ?? null;
+        foreach ($players as &$player) {
+            if ($reason === 'forfeit' || $handReason !== 'showdown' || $player['folded']) {
                 $player['cards'] = [];
             }
-            unset($player);
         }
+        unset($player);
 
         $this->broadcast($tableId, [
             'event'   => 'match_end',
@@ -1505,11 +1327,7 @@ final class GameSocket implements MessageComponentInterface
         $versionBefore = $svc->getVersion();
     
         // Try to start the first hand with its version and snapshot in one transaction.
-        $startedTransaction = false;
-        if (!$this->pdo->inTransaction()) {
-            $this->pdo->beginTransaction();
-            $startedTransaction = true;
-        }
+        $startedTransaction = $this->beginTransactionIfNeeded();
 
         try {
             $result = $svc->startHand($deckSeed);
@@ -1521,19 +1339,15 @@ final class GameSocket implements MessageComponentInterface
                 $reason = $result['reason'] ?? null;
 
                 if (!$this->hasValidMatchEndPlayers($winner, $loser, $tableId, 'Bootstrapping match end')) {
-                    if ($startedTransaction && $this->pdo->inTransaction()) {
-                        $this->pdo->rollBack();
-                    }
+                    $this->finishTransaction($startedTransaction, false);
                     $svc->restoreSnapshot($stateBefore, $versionBefore);
                     $this->tableBootstrapped[$tableId] = true;
                     return;
                 }
 
-                $stateSnapshot = $this->resolveResultStateSnapshot($result, $svc);
+                $stateSnapshot = $result['state'] ?? $svc->getSnapshot();
                 $this->persistMatchEnd($tableId, $gameId, false);
-                if ($startedTransaction && $this->pdo->inTransaction() && !$this->pdo->commit()) {
-                    throw new RuntimeException('Failed to commit bootstrap match end');
-                }
+                $this->finishTransaction($startedTransaction, true, 'Failed to commit bootstrap match end');
                 $this->publishMatchEnd(
                     $tableId,
                     $winner,
@@ -1544,9 +1358,7 @@ final class GameSocket implements MessageComponentInterface
                 return;
             }
 
-            if ($startedTransaction && $this->pdo->inTransaction() && !$this->pdo->commit()) {
-                throw new RuntimeException('Failed to commit hand bootstrap');
-            }
+            $this->finishTransaction($startedTransaction, true, 'Failed to commit hand bootstrap');
 
             $state = $result['state'] ?? $svc->getSnapshot();
             $this->broadcast($tableId, [
@@ -1556,9 +1368,7 @@ final class GameSocket implements MessageComponentInterface
             ]);
             $this->tableBootstrapped[$tableId] = true;
         } catch (\Throwable $e) {
-            if ($startedTransaction && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
+            $this->finishTransaction($startedTransaction, false);
             $this->restoreAfterFailedCommand($svc, $stateBefore, $versionBefore);
             throw $e;
         }

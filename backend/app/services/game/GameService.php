@@ -204,7 +204,12 @@ final class GameService
             return false;
         }
 
-        $this->restoreSnapshot($snapshot['state'], (int)$snapshot['version']);
+        $state = $snapshot['state'];
+        if (isset($state['state']) && is_array($state['state']) && !isset($state['phase'])) {
+            $state = $state['state'];
+        }
+
+        $this->restoreSnapshot($state, (int)$snapshot['version']);
         return true;
     }
 

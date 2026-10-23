@@ -372,7 +372,19 @@ final class GameRecoveryTest extends TestCase
         [$actingConn, $private] = $this->actingConnection($conn1, $conn2);
         $fold = $this->validActionPayload($actingConn, $private);
         $fold['action'] = 'fold';
+        $conn1->sentMessages = [];
+        $conn2->sentMessages = [];
         $this->gameSocket->onMessage($actingConn, json_encode($fold, JSON_THROW_ON_ERROR));
+
+        $this->assertCount(1, $this->messagesByType($conn1, 'STATE_PRIVATE'));
+        $this->assertCount(1, $this->messagesByType($conn2, 'STATE_PRIVATE'));
+
+        $handEnd = $this->lastMessageByEvent($conn1, 'hand_end');
+        $this->assertNotNull($handEnd);
+        $this->assertSame('fold', $handEnd['summary']['reason'] ?? null);
+        foreach ($handEnd['summary']['players'] as $player) {
+            $this->assertSame([], $player['cards'] ?? null);
+        }
 
         $ended = db_get_latest_snapshot($this->pdo, $this->gameId);
         $this->assertNotNull($ended);

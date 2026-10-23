@@ -90,48 +90,6 @@ function db_get_latest_snapshot(PDO $pdo, int $gameId): ?array
     }
 }
 
-/**
- * Get a snapshot by specific version
- * 
- * @param PDO $pdo Database connection
- * @param int $gameId Game ID
- * @param int $version Version number
- * @return array{version: int, state: array<string, mixed>}|null Snapshot data or null if not found
- */
-function db_get_snapshot_by_version(PDO $pdo, int $gameId, int $version): ?array
-{
-    $stmt = $pdo->prepare("
-        SELECT version, state_json
-        FROM game_snapshots
-        WHERE game_id = :game_id AND version = :version
-        LIMIT 1
-    ");
-    $stmt->execute([
-        'game_id' => $gameId,
-        'version' => $version,
-    ]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    if (!$row) {
-        return null;
-    }
-    
-    try {
-        $state = json_decode($row['state_json'], true, 512, JSON_THROW_ON_ERROR);
-        if (!is_array($state)) {
-            return null;
-        }
-        
-        return [
-            'version' => (int)$row['version'],
-            'state' => $state,
-        ];
-    } catch (JsonException $e) {
-        error_log("Failed to decode snapshot JSON: " . $e->getMessage());
-        return null;
-    }
-}
-
 function db_delete_snapshots(PDO $pdo, int $gameId): bool
 {
     $stmt = $pdo->prepare('DELETE FROM game_snapshots WHERE game_id = :game_id');
