@@ -88,7 +88,7 @@ final class GameServiceStateTest extends TestCase
         $this->completeHand($game);
         
         // Start next hand
-        $result = $game->startNextHand();
+        $result = $game->startHand();
         $this->assertTrue($result['ok']);
         
         $dealer2 = $this->getDealerSeat($game);
@@ -129,7 +129,7 @@ final class GameServiceStateTest extends TestCase
         $this->completeHand($game);
         
         // Start next hand
-        $result = $game->startNextHand();
+        $result = $game->startHand();
         $this->assertTrue($result['ok']);
 
         $investments = [

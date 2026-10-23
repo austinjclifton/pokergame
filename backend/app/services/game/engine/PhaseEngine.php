@@ -30,9 +30,7 @@ final class PhaseEngine
 
         $bettingComplete = BettingEngine::isBettingRoundComplete(
             $active,
-            $state->actionSeat,
-            $state->currentBet,
-            $state->lastRaiseSeat
+            $state->currentBet
         );
 
         $someoneAllIn = self::anyPlayerAllIn($active);

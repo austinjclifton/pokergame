@@ -125,9 +125,7 @@ final class GameServiceBettingTest extends TestCase
         $this->assertTrue(
             \BettingEngine::isBettingRoundComplete(
                 $this->getActivePlayers($game),
-                $this->getActionSeat($game),
-                $this->getCurrentBet($game),
-                $this->getLastRaiseSeat($game)
+                $this->getCurrentBet($game)
             ),
             'Betting round should be complete even when an all-in player is present'
         );

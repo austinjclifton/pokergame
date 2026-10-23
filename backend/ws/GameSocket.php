@@ -403,7 +403,6 @@ final class GameSocket implements MessageComponentInterface
             $matchEnded  = $result['matchEnded']  ?? false;
             $winner      = $result['winner']      ?? null;
             $loser       = $result['loser']       ?? null;
-            $reason      = $result['reason']      ?? null;
 
             // If the entire MATCH is over (one player busted), end the match now
             if ($matchEnded) {
@@ -413,19 +412,12 @@ final class GameSocket implements MessageComponentInterface
                     return;
                 }
 
-                $gameId = $gameService->getGameId();
-                $stateSnapshot = $result['state'] ?? $gameService->getSnapshot();
-                $this->persistMatchEnd($tableId, $gameId);
-
-                $this->finishTransaction($startedTransaction, true, 'Failed to commit match end');
-
-                $this->publishMatchEnd(
+                $this->commitMatchEnd(
                     $tableId,
-                    $winner,
-                    $loser,
-                    $reason,
-                    $stateSnapshot,
-                    function () use ($tableId): void {
+                    $gameService->getGameId(),
+                    $result,
+                    $startedTransaction,
+                    afterBroadcast: function () use ($tableId): void {
                         $presenceUsers = [];
                         foreach ($this->userConnections[$tableId] ?? [] as $uid => $conns) {
                             $presenceUsers[] = [
@@ -438,7 +430,7 @@ final class GameSocket implements MessageComponentInterface
 
                         $this->syncMatchEndPresence($presenceUsers, 'match end');
                     },
-                    true,
+                    clearPendingDisconnects: true,
                 );
                 return; // DO NOT send further state; table is done
             }
@@ -513,7 +505,6 @@ final class GameSocket implements MessageComponentInterface
             if (($result['matchEnded'] ?? false) === true) {
                 $winner = $result['winner'] ?? null;
                 $loser  = $result['loser']  ?? null;
-                $reason = $result['reason'] ?? null;
                 
                 if (!$this->hasValidMatchEndPlayers($winner, $loser, $tableId, 'Next-hand match end', $from)) {
                     $this->finishTransaction($startedTransaction, false);
@@ -521,19 +512,12 @@ final class GameSocket implements MessageComponentInterface
                     return;
                 }
                 
-                $gameId = $gameService->getGameId();
-                $stateSnapshot = $result['state'] ?? $gameService->getSnapshot();
-                $this->persistMatchEnd($tableId, $gameId);
-
-                $this->finishTransaction($startedTransaction, true, 'Failed to commit match end');
-
-                $this->publishMatchEnd(
+                $this->commitMatchEnd(
                     $tableId,
-                    $winner,
-                    $loser,
-                    $reason,
-                    $stateSnapshot,
-                    function () use ($winner, $loser): void {
+                    $gameService->getGameId(),
+                    $result,
+                    $startedTransaction,
+                    afterBroadcast: function () use ($winner, $loser): void {
                         $this->syncMatchEndPresence([$winner, $loser], 'next-hand match end');
                     },
                 );
@@ -1225,8 +1209,18 @@ final class GameSocket implements MessageComponentInterface
         return $playerData;
     }
 
-    private function persistMatchEnd(int $tableId, ?int $gameId, bool $deleteGame = true): void
-    {
+    /** @param array<string, mixed> $result */
+    private function commitMatchEnd(
+        int $tableId,
+        ?int $gameId,
+        array $result,
+        bool $startedTransaction,
+        ?callable $afterBroadcast = null,
+        bool $deleteGame = true,
+        bool $clearPendingDisconnects = false,
+    ): void {
+        $stateSnapshot = $result['state'] ?? $this->gameServices[$tableId]->getSnapshot();
+
         if ($deleteGame && $gameId) {
             if (!db_delete_snapshots($this->pdo, $gameId)) {
                 throw new RuntimeException("Failed to delete snapshots for completed game {$gameId}");
@@ -1239,6 +1233,16 @@ final class GameSocket implements MessageComponentInterface
         if (!db_clear_table_seats($this->pdo, $tableId)) {
             throw new RuntimeException("Failed to clear seats for completed table {$tableId}");
         }
+        $this->finishTransaction($startedTransaction, true, 'Failed to commit match end');
+        $this->publishMatchEnd(
+            $tableId,
+            $result['winner'],
+            $result['loser'],
+            $result['reason'] ?? null,
+            $stateSnapshot,
+            $afterBroadcast,
+            $clearPendingDisconnects,
+        );
     }
 
     /**
@@ -1336,7 +1340,6 @@ final class GameSocket implements MessageComponentInterface
             if (($result['matchEnded'] ?? false) === true) {
                 $winner = $result['winner'] ?? null;
                 $loser  = $result['loser'] ?? null;
-                $reason = $result['reason'] ?? null;
 
                 if (!$this->hasValidMatchEndPlayers($winner, $loser, $tableId, 'Bootstrapping match end')) {
                     $this->finishTransaction($startedTransaction, false);
@@ -1345,15 +1348,12 @@ final class GameSocket implements MessageComponentInterface
                     return;
                 }
 
-                $stateSnapshot = $result['state'] ?? $svc->getSnapshot();
-                $this->persistMatchEnd($tableId, $gameId, false);
-                $this->finishTransaction($startedTransaction, true, 'Failed to commit bootstrap match end');
-                $this->publishMatchEnd(
+                $this->commitMatchEnd(
                     $tableId,
-                    $winner,
-                    $loser,
-                    $reason,
-                    $stateSnapshot,
+                    $gameId,
+                    $result,
+                    $startedTransaction,
+                    deleteGame: false,
                 );
                 return;
             }

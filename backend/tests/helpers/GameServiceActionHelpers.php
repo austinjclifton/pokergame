@@ -149,17 +149,6 @@ trait GameServiceActionHelpers
     }
 
     /**
-     * Start next hand (calls internal method)
-     * 
-     * @param GameService $game Game service instance
-     * @return void
-     */
-    protected function startNextHand(GameService $game): void
-    {
-        $game->startNextHand();
-    }
-
-    /**
      * Replay actions from database format
      * 
      * @param GameService $game Game service instance
@@ -333,14 +322,11 @@ trait GameServiceActionHelpers
             $activePlayers = $this->getActivePlayers($game);
             $actionSeat = $this->getActionSeat($game);
             $currentBet = $this->getCurrentBet($game);
-            $lastRaiseSeat = $this->getLastRaiseSeat($game);
             $phaseBefore = $this->getPhase($game);
             
             $isComplete = \BettingEngine::isBettingRoundComplete(
                 $activePlayers,
-                $actionSeat,
-                $currentBet,
-                $lastRaiseSeat
+                $currentBet
             );
             
             if ($isComplete) {

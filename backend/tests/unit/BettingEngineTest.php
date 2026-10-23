@@ -52,10 +52,9 @@ final class BettingEngineTest extends TestCase
         
         $currentBet = 20;
         $lastRaiseAmount = 20;
-        $bigBlindAmount = 20;
         
         // First raise to 40 should succeed (20 + 20 = 40)
-        $result1 = BettingEngine::executeAction($player2, ActionType::RAISE, 20, $currentBet, $bigBlindAmount, $lastRaiseAmount);
+        $result1 = BettingEngine::executeAction($player2, ActionType::RAISE, 20, $currentBet, $lastRaiseAmount);
         $this->assertTrue($result1['ok'], 'First raise to 40 should succeed');
         $this->assertEquals(40, $result1['newBet'], 'New bet should be 40');
         
@@ -65,7 +64,7 @@ final class BettingEngineTest extends TestCase
         $player1->bet = 0; // Reset for next test
         
         // Second raise to 55 should fail (minimum is 60: 40 + 20)
-        $result2 = BettingEngine::executeAction($player1, ActionType::RAISE, 15, $currentBet, $bigBlindAmount, $lastRaiseAmount);
+        $result2 = BettingEngine::executeAction($player1, ActionType::RAISE, 15, $currentBet, $lastRaiseAmount);
         $this->assertFalse($result2['ok'], 'Raise to 55 should fail');
         $this->assertStringContainsString('Minimum raise', $result2['message'] ?? '', 'Error should mention minimum raise');
     }
@@ -82,12 +81,11 @@ final class BettingEngineTest extends TestCase
         
         $currentBet = 20;
         $lastRaiseAmount = 20;
-        $bigBlindAmount = 20;
         $initialStack = $player1->stack;
         $initialTotalInvested = $player1->totalInvested;
         
         // Attempt raise to 35 (insufficient - minimum is 40)
-        $result = BettingEngine::executeAction($player1, ActionType::RAISE, 15, $currentBet, $bigBlindAmount, $lastRaiseAmount);
+        $result = BettingEngine::executeAction($player1, ActionType::RAISE, 15, $currentBet, $lastRaiseAmount);
         
         $this->assertFalse($result['ok'], 'Insufficient raise should be rejected');
         $this->assertStringContainsString('Minimum raise is to 40', $result['message'] ?? '', 'Error should specify minimum raise amount');
@@ -110,7 +108,6 @@ final class BettingEngineTest extends TestCase
         // We only care about the math on this one player's totalInvested.
         $currentBet = 20;          // Opponent opened to 20
         $lastRaiseAmount = 20;     // BB = 20
-        $bigBlindAmount = 20;
 
         $initialStack = $player->stack;
 
@@ -123,7 +120,6 @@ final class BettingEngineTest extends TestCase
             ActionType::CALL,
             0,
             $currentBet,
-            $bigBlindAmount,
             $lastRaiseAmount
         );
 
@@ -150,7 +146,6 @@ final class BettingEngineTest extends TestCase
             ActionType::CALL,
             0,
             $currentBet,
-            $bigBlindAmount,
             $lastRaiseAmount
         );
 
@@ -176,7 +171,6 @@ final class BettingEngineTest extends TestCase
             ActionType::ALLIN,
             0,
             $currentBet,
-            $bigBlindAmount,
             $lastRaiseAmount
         );
 
@@ -200,10 +194,9 @@ final class BettingEngineTest extends TestCase
         
         $currentBet = 20;
         $lastRaiseAmount = 20;
-        $bigBlindAmount = 20;
         
         // First raise to 40 should succeed (20 + 20 = 40)
-        $result1 = BettingEngine::executeAction($player1, ActionType::RAISE, 20, $currentBet, $bigBlindAmount, $lastRaiseAmount);
+        $result1 = BettingEngine::executeAction($player1, ActionType::RAISE, 20, $currentBet, $lastRaiseAmount);
         $this->assertTrue($result1['ok'], 'First raise to 40 should succeed');
         $this->assertEquals(40, $result1['newBet'], 'New bet should be 40');
         
@@ -214,7 +207,7 @@ final class BettingEngineTest extends TestCase
         // Second raise to 55 should fail (minimum is 60: 40 + 20)
         $currentBet = 40;
         $player2->bet = 0; // Reset for next test
-        $result2 = BettingEngine::executeAction($player2, ActionType::RAISE, 15, $currentBet, $bigBlindAmount, $expectedLastRaiseAmount);
+        $result2 = BettingEngine::executeAction($player2, ActionType::RAISE, 15, $currentBet, $expectedLastRaiseAmount);
         $this->assertFalse($result2['ok'], 'Raise to 55 should fail');
         $this->assertStringContainsString('Minimum raise is to 60', $result2['message'] ?? '', 'Error should specify minimum raise of 60');
     }
@@ -229,7 +222,6 @@ final class BettingEngineTest extends TestCase
             $smallBlind,
             ActionType::RAISE,
             90,
-            20,
             20,
             20,
             $players

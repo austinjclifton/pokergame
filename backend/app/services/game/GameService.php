@@ -213,11 +213,6 @@ final class GameService
         return true;
     }
 
-    public function startNextHand(?int $seed = null): array
-    {
-        return $this->startHand($seed);
-    }
-
     public function advancePhaseIfNeeded(): ?array
     {
         return PhaseEngine::advance($this->state);

@@ -70,7 +70,7 @@ final class GameFoldTerminationTest extends BaseDBIntegrationTest
         $this->assertLessThan(1000, $stateAfterFold['players'][$actingSeat]['stack']);
         $this->assertGreaterThan(1000, $stateAfterFold['players'][$winningSeat]['stack']);
 
-        $nextHandResult = $gameService->startNextHand(12346);
+        $nextHandResult = $gameService->startHand(12346);
         $this->assertTrue($nextHandResult['ok']);
         $this->assertFalse($nextHandResult['handEnded'] ?? false);
         $this->assertSame('preflop', $nextHandResult['state']['phase']);

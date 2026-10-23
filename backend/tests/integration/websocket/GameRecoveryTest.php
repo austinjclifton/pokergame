@@ -460,6 +460,18 @@ final class GameRecoveryTest extends TestCase
             static fn(array $seat): bool => $seat['left_at'] === null,
         );
         $this->assertSame([], $activeSeats);
+
+        $conn1->sentMessages = [];
+        $this->gameSocket->onMessage($conn1, json_encode([
+            'type' => 'action',
+            'action' => 'forfeit',
+            'amount' => 0,
+            'game_version' => $sync['version'],
+        ], JSON_THROW_ON_ERROR));
+
+        $this->assertNull($this->lastMessageByEvent($conn1, 'match_end'));
+        $this->assertSame('match_ended', $this->lastMessageByType($conn1, 'error')['error'] ?? null);
+        $this->assertNull(db_get_active_game($this->pdo, $this->tableId));
     }
 
     public function testStaleServerStateCannotOverwriteNewerAuthoritativeSnapshot(): void

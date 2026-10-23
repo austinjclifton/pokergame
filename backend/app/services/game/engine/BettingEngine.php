@@ -97,7 +97,6 @@ final class BettingEngine
         ActionType $action,
         int $amount,
         int $currentBet,
-        int $bigBlindAmount,   // kept for interface compatibility; not used here
         int $lastRaiseAmount,
         array $allPlayers = [] // needed for effective-stack logic
     ): array {
@@ -325,9 +324,7 @@ final class BettingEngine
     // ========================================================
     public static function isBettingRoundComplete(
         array $activePlayers,
-        int $actionSeat,
-        int $currentBet,
-        int $lastRaiseSeat
+        int $currentBet
     ): bool {
         if (count($activePlayers) <= 1) {
             return true;

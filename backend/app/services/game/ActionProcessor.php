@@ -83,7 +83,6 @@ final class ActionProcessor
             $action,
             $amount,
             $state->currentBet,
-            $state->bigBlindAmount,
             $state->lastRaiseAmount,
             $state->players  // <—— REQUIRED FOR EFFECTIVE STACK LOGIC
         );

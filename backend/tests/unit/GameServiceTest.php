@@ -329,7 +329,7 @@ final class GameServiceTest extends TestCase
         $this->assertSame(990, $fold['state']['players'][1]['stack']);
         $this->assertSame(1010, $fold['state']['players'][2]['stack']);
 
-        $next = $this->game->startNextHand(12345);
+        $next = $this->game->startHand(12345);
         $this->assertTrue($next['ok']);
         $this->assertSame(2000, $next['state']['pot'] + array_sum(array_column($next['state']['players'], 'stack')));
         $this->assertSame(20, $next['state']['players'][1]['bet']);
