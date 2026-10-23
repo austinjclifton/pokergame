@@ -7,6 +7,10 @@
 
 declare(strict_types=1);
 
+final class GameVersionConflictException extends RuntimeException
+{
+}
+
 /**
  * Increment the game version and return the new version.
  *
@@ -14,14 +18,32 @@ declare(strict_types=1);
  * @param int $gameId
  * @return int
  */
-function db_increment_game_version(PDO $pdo, int $gameId): int
+function db_increment_game_version(PDO $pdo, int $gameId, ?int $expectedVersion = null): int
 {
-    $stmt = $pdo->prepare("
-        UPDATE games
-        SET version = version + 1
-        WHERE id = :game_id
-    ");
-    $stmt->execute(['game_id' => $gameId]);
+    if ($expectedVersion === null) {
+        $stmt = $pdo->prepare("
+            UPDATE games
+            SET version = version + 1
+            WHERE id = :game_id
+        ");
+        $stmt->execute(['game_id' => $gameId]);
+    } else {
+        $stmt = $pdo->prepare("
+            UPDATE games
+            SET version = version + 1
+            WHERE id = :game_id AND version = :expected_version
+        ");
+        $stmt->execute([
+            'game_id' => $gameId,
+            'expected_version' => $expectedVersion,
+        ]);
+
+        if ($stmt->rowCount() !== 1) {
+            throw new GameVersionConflictException(
+                "Game {$gameId} is no longer at version {$expectedVersion}"
+            );
+        }
+    }
 
     $stmt = $pdo->prepare("
         SELECT version
@@ -30,5 +52,10 @@ function db_increment_game_version(PDO $pdo, int $gameId): int
     ");
     $stmt->execute(['game_id' => $gameId]);
 
-    return (int)$stmt->fetchColumn();
+    $version = $stmt->fetchColumn();
+    if ($version === false) {
+        throw new RuntimeException("Game {$gameId} was not found while advancing its version");
+    }
+
+    return (int)$version;
 }

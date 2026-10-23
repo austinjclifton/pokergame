@@ -39,7 +39,7 @@ uppercase `CHAT`.
 |---|---|
 | `ping` | `type` |
 | `action` | `type`, `action`, `amount`, `game_version` |
-| `next_hand` | `type` |
+| `next_hand` | `type`, optional `game_version` |
 | `chat` | `type`, `msg` |
 | `forfeit` | `type` |
 

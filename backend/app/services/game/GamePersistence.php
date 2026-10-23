@@ -20,9 +20,9 @@ final class GamePersistence
      * NO ACTION LOGGING ANYMORE.
      * We simply bump the game version (optional) and rely on snapshots only.
      */
-    public function bumpVersion(int $gameId): int
+    public function bumpVersion(int $gameId, ?int $expectedVersion = null): int
     {
-        return db_increment_game_version($this->pdo, $gameId);
+        return db_increment_game_version($this->pdo, $gameId, $expectedVersion);
     }
 
     /**
@@ -50,15 +50,9 @@ final class GamePersistence
      */
     public function snapshotForced(int $gameId, int $version, array $state): void
     {
-        db_insert_snapshot($this->pdo, $gameId, $version, $state);
-    }
-
-    /**
-     * Alias for compatibility with GameSocket
-     */
-    public function saveSnapshot(int $gameId, array $state, int $version): void
-    {
-        $this->snapshotForced($gameId, $version, $state);
+        if (!db_insert_snapshot($this->pdo, $gameId, $version, $state)) {
+            throw new RuntimeException("Failed to persist snapshot for game {$gameId} at version {$version}");
+        }
     }
 
     /**

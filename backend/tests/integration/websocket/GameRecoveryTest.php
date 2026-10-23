@@ -250,6 +250,147 @@ final class GameRecoveryTest extends TestCase
         $this->assertSame($currentVersion, $resync['version']);
     }
 
+    public function testEveryAcceptedActionAdvancesVersionExactlyOnce(): void
+    {
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
+        $this->openAuthenticatedConnection($conn1);
+        $this->openAuthenticatedConnection($conn2);
+
+        $initialSync = $this->lastMessageByType($conn1, 'STATE_SYNC');
+        $this->assertNotNull($initialSync);
+        $expectedVersion = (int)$initialSync['version'];
+
+        for ($actionCount = 0; $actionCount < 4; $actionCount++) {
+            [$actingConn, $private] = $this->actingConnection($conn1, $conn2);
+            $payload = $this->validActionPayload($actingConn, $private);
+            $payload['game_version'] = $expectedVersion;
+
+            $conn1->sentMessages = [];
+            $conn2->sentMessages = [];
+            $this->gameSocket->onMessage($actingConn, json_encode($payload, JSON_THROW_ON_ERROR));
+
+            $stateDiff = $this->lastMessageByType($conn1, 'STATE_DIFF')
+                ?? $this->lastMessageByType($conn2, 'STATE_DIFF');
+            $this->assertNotNull($stateDiff, 'Expected accepted action to broadcast state');
+            $this->assertSame(++$expectedVersion, $stateDiff['version']);
+
+            $persisted = db_get_latest_snapshot($this->pdo, $this->gameId);
+            $this->assertNotNull($persisted);
+            $this->assertSame($expectedVersion, $persisted['version']);
+            $this->assertSame($expectedVersion, $this->databaseVersion());
+
+            if (($stateDiff['state']['phase'] ?? null) !== 'preflop') {
+                $this->assertSame('flop', $stateDiff['state']['phase']);
+                return;
+            }
+        }
+
+        $this->fail('Expected normal turn ordering to advance the hand to the flop');
+    }
+
+    public function testRejectedActionDoesNotAdvanceVersion(): void
+    {
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
+        $this->openAuthenticatedConnection($conn1);
+        $this->openAuthenticatedConnection($conn2);
+
+        [$actingConn, $private] = $this->actingConnection($conn1, $conn2);
+        $payload = $this->validActionPayload($actingConn, $private);
+        $payload['action'] = 'not-a-poker-action';
+        $versionBefore = $this->databaseVersion();
+        $snapshotBefore = db_get_latest_snapshot($this->pdo, $this->gameId);
+
+        $actingConn->sentMessages = [];
+        $this->gameSocket->onMessage($actingConn, json_encode($payload, JSON_THROW_ON_ERROR));
+
+        $error = $this->lastMessageByType($actingConn, 'error');
+        $this->assertNotNull($error);
+        $this->assertSame('action_failed', $error['error']);
+        $this->assertSame($versionBefore, $this->databaseVersion());
+        $this->assertSame($snapshotBefore, db_get_latest_snapshot($this->pdo, $this->gameId));
+        $this->assertNull($this->lastMessageByType($actingConn, 'STATE_DIFF'));
+    }
+
+    public function testStaleActionCannotOverwriteNewerSnapshot(): void
+    {
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
+        $this->openAuthenticatedConnection($conn1);
+        $this->openAuthenticatedConnection($conn2);
+
+        [$actingConn, $private] = $this->actingConnection($conn1, $conn2);
+        $stalePayload = $this->validActionPayload($actingConn, $private);
+        $this->gameSocket->onMessage($actingConn, json_encode($stalePayload, JSON_THROW_ON_ERROR));
+
+        $authoritative = db_get_latest_snapshot($this->pdo, $this->gameId);
+        $this->assertNotNull($authoritative);
+        $this->assertSame($stalePayload['game_version'] + 1, $authoritative['version']);
+
+        $actingConn->sentMessages = [];
+        $this->gameSocket->onMessage($actingConn, json_encode($stalePayload, JSON_THROW_ON_ERROR));
+
+        $resync = $this->lastMessageByType($actingConn, 'STATE_SYNC');
+        $this->assertNotNull($resync);
+        $this->assertSame('version_mismatch', $resync['reason']);
+        $this->assertSame($authoritative['version'], $resync['version']);
+        $this->assertSame($authoritative, db_get_latest_snapshot($this->pdo, $this->gameId));
+        $this->assertSame($authoritative['version'], $this->databaseVersion());
+        $this->assertNull($this->lastMessageByType($actingConn, 'STATE_DIFF'));
+    }
+
+    public function testStaleServerStateCannotOverwriteNewerAuthoritativeSnapshot(): void
+    {
+        $conn1 = $this->createConnection(1, $this->userId1);
+        $conn2 = $this->createConnection(2, $this->userId2);
+        $this->openAuthenticatedConnection($conn1);
+        $this->openAuthenticatedConnection($conn2);
+
+        [$actingConn, $private] = $this->actingConnection($conn1, $conn2);
+        $payload = $this->validActionPayload($actingConn, $private);
+        $staleVersion = $payload['game_version'];
+
+        $authoritative = db_get_latest_snapshot($this->pdo, $this->gameId);
+        $this->assertNotNull($authoritative);
+        $authoritative['version'] = $staleVersion + 1;
+        $authoritative['state']['players'][1]['stack'] += 7;
+
+        $statement = $this->pdo->prepare('UPDATE games SET version = :version WHERE id = :game_id');
+        $statement->execute([
+            'version' => $authoritative['version'],
+            'game_id' => $this->gameId,
+        ]);
+        db_insert_snapshot(
+            $this->pdo,
+            $this->gameId,
+            $authoritative['version'],
+            $authoritative['state'],
+        );
+
+        $actingConn->sentMessages = [];
+        $this->gameSocket->onMessage($actingConn, json_encode($payload, JSON_THROW_ON_ERROR));
+
+        $resync = $this->lastMessageByType($actingConn, 'STATE_SYNC');
+        $this->assertNotNull($resync);
+        $this->assertSame('version_mismatch', $resync['reason']);
+        $this->assertSame($authoritative['version'], $resync['version']);
+        $this->assertSame(
+            $authoritative['state']['players'][1]['stack'],
+            $resync['state']['players'][1]['stack'],
+        );
+        $this->assertSame($authoritative, db_get_latest_snapshot($this->pdo, $this->gameId));
+        $this->assertSame($authoritative['version'], $this->databaseVersion());
+        $this->assertNull($this->lastMessageByType($actingConn, 'STATE_DIFF'));
+    }
+
+    private function databaseVersion(): int
+    {
+        $statement = $this->pdo->prepare('SELECT version FROM games WHERE id = :game_id');
+        $statement->execute(['game_id' => $this->gameId]);
+        return (int)$statement->fetchColumn();
+    }
+
     public function testLatestSnapshotMatchesBroadcastState(): void
     {
         $conn1 = $this->createConnection(1, $this->userId1);

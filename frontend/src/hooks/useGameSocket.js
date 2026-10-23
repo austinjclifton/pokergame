@@ -378,11 +378,16 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
     }
 
     try {
-      ws.send(JSON.stringify({ type: "next_hand" }));
+      ws.send(
+        JSON.stringify({
+          type: "next_hand",
+          game_version: gameState.gameVersion,
+        })
+      );
     } catch (err) {
       onErrorRef.current?.(`Failed to send next_hand request: ${err.message}`);
     }
-  }, [gameState.matchEnded]);
+  }, [gameState.gameVersion, gameState.matchEnded]);
 
   const requestSync = useCallback(() => {
     const ws = socketRef.current;
@@ -578,7 +583,12 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
         if (!matchEndedRef.current) {
           const wsCurrent = socketRef.current;
           if (wsCurrent && wsCurrent.readyState === WebSocket.OPEN) {
-            wsCurrent.send(JSON.stringify({ type: "next_hand" }));
+            wsCurrent.send(
+              JSON.stringify({
+                type: "next_hand",
+                game_version: stateRef.current.gameVersion,
+              })
+            );
           }
         }
       }, 5000);

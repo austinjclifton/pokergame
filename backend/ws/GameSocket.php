@@ -282,7 +282,7 @@ final class GameSocket implements MessageComponentInterface
             match ($data['type']) {
                 'ping'          => $this->handlePing($from, $rid),
                 'action'        => $this->handleAction($from, $data, $info),
-                'next_hand'     => $this->handleNextHand($from, $info),
+                'next_hand'     => $this->handleNextHand($from, $data, $info),
                 'chat'          => $this->handleChat($from, $data, $info),
                 'chat_history'  => $this->sendChatHistory($from, (int)$info['game_id']),
             
@@ -440,13 +440,6 @@ final class GameSocket implements MessageComponentInterface
                 
                 $gameId = $gameService->getGameId();
                 
-                // Save snapshot if state is provided, otherwise use current snapshot
-                if ($gameId && isset($result['state'])) {
-                    $stateAfter = $result['state'];
-                    $newVersion = $gameService->getVersion();
-                    $this->persistenceService->saveSnapshot($gameId, $stateAfter, $newVersion);
-                }
-
                 $stateSnapshot = $this->resolveResultStateSnapshot($result, $gameService);
                 $this->finalizeMatchEnd(
                     $tableId,
@@ -473,13 +466,7 @@ final class GameSocket implements MessageComponentInterface
                 return; // DO NOT send further state; table is done
             }
             
-            // Normal path: save snapshot and broadcast state updates
             $gameId = $gameService->getGameId();
-            if ($gameId && isset($result['state'])) {
-                $stateAfter  = $result['state'];
-                $newVersion  = $gameService->getVersion();
-                $this->persistenceService->saveSnapshot($gameId, $stateAfter, $newVersion);
-            }
             
             // If the hand ended, always broadcast the hand summary for the overlay
             if ($handEnded && $handSummary !== null) {
@@ -504,6 +491,12 @@ final class GameSocket implements MessageComponentInterface
                 'type'  => 'STATE_PRIVATE',
                 'state' => $privateState,
             ]);
+        } catch (GameVersionConflictException $e) {
+            if (isset($startedTransaction) && $startedTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            $gameService->restoreLatestSnapshot();
+            $this->sendStateSync($from, $tableId, $seat, 'version_mismatch');
         } catch (\ValueError $e) {
             $this->sendError($from, 'invalid_action');
         } catch (\Throwable $e) {
@@ -515,7 +508,7 @@ final class GameSocket implements MessageComponentInterface
         }
     }
         
-    private function handleNextHand(ConnectionInterface $from, array $info): void
+    private function handleNextHand(ConnectionInterface $from, array $data, array $info): void
     {
         $tableId = (int)$info['table_id'];
         $gameService = $this->gameServices[$tableId] ?? null;
@@ -526,6 +519,12 @@ final class GameSocket implements MessageComponentInterface
         }
     
         try {
+            $clientVersion = isset($data['game_version']) ? (int)$data['game_version'] : 0;
+            if ($clientVersion > 0 && $clientVersion !== $gameService->getVersion()) {
+                $this->sendStateSync($from, $tableId, (int)$info['seat'], 'version_mismatch');
+                return;
+            }
+
             $startedTransaction = false;
             if (!$this->pdo->inTransaction()) {
                 $this->pdo->beginTransaction();
@@ -595,6 +594,12 @@ final class GameSocket implements MessageComponentInterface
                 }
             }
     
+        } catch (GameVersionConflictException $e) {
+            if (isset($startedTransaction) && $startedTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            $gameService->restoreLatestSnapshot();
+            $this->sendStateSync($from, $tableId, (int)$info['seat'], 'version_mismatch');
         } catch (\Throwable $e) {
             if (isset($startedTransaction) && $startedTransaction && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
@@ -1455,8 +1460,24 @@ final class GameSocket implements MessageComponentInterface
     
         $svc->loadPlayers($players);
     
-        // Try to start the first hand
-        $result = $svc->startHand($deckSeed);
+        // Try to start the first hand with its version and snapshot in one transaction.
+        $startedTransaction = false;
+        if (!$this->pdo->inTransaction()) {
+            $this->pdo->beginTransaction();
+            $startedTransaction = true;
+        }
+
+        try {
+            $result = $svc->startHand($deckSeed);
+            if ($startedTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($startedTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
     
         // Match is already over before any hand starts
         if (($result['matchEnded'] ?? false) === true) {

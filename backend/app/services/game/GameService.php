@@ -91,40 +91,46 @@ final class GameService
             return $matchEnd;
         }
 
-        // Normal dealing
-        HandStarter::startHand(
-            $this->state,
-            $this->smallBlind,
-            $this->bigBlind,
-            $seed
-        );
+        $stateBefore = $this->state->toArray();
 
-        $openingSummary = null;
-        $phaseInfo = PhaseEngine::advance($this->state);
-        if ($phaseInfo !== null && ($phaseInfo['handEnded'] ?? false)) {
-            $openingSummary = $this->runShowdownSettlement();
-        }
+        try {
+            // Normal dealing
+            HandStarter::startHand(
+                $this->state,
+                $this->smallBlind,
+                $this->bigBlind,
+                $seed
+            );
 
-        // Bump version, persist snapshot, and broadcast hand_start event
-        if ($this->gameId !== null) {
-            $newVersion    = $this->persistence->bumpVersion($this->gameId);
-            $this->version = $newVersion;
+            $openingSummary = null;
+            $phaseInfo = PhaseEngine::advance($this->state);
+            if ($phaseInfo !== null && ($phaseInfo['handEnded'] ?? false)) {
+                $openingSummary = $this->runShowdownSettlement();
+            }
 
-            $stateArr = $this->state->toArray();
-            $this->persistence->snapshotForced($this->gameId, $newVersion, $stateArr);
+            // Bump version, persist snapshot, and broadcast hand_start event
+            if ($this->gameId !== null) {
+                $newVersion = $this->persistence->bumpVersion($this->gameId, $this->version);
+                $stateArr = $this->state->toArray();
+                $this->persistence->snapshotForced($this->gameId, $newVersion, $stateArr);
+                $this->version = $newVersion;
 
-            // Broadcast hand_start event (GameSocket class will be loaded by the time this is called)
-            if (class_exists('GameSocket') && method_exists('GameSocket', 'broadcastByGameId')) {
-                try {
-                    GameSocket::broadcastByGameId($this->gameId, [
-                        'type'    => 'hand_start',
-                        'state'   => $stateArr,
-                        'version' => $newVersion
-                    ]);
-                } catch (\Throwable $e) {
-                    error_log("[GameService] Failed to broadcast hand_start: " . $e->getMessage());
+                // Broadcast hand_start event (GameSocket class will be loaded by the time this is called)
+                if (class_exists('GameSocket') && method_exists('GameSocket', 'broadcastByGameId')) {
+                    try {
+                        GameSocket::broadcastByGameId($this->gameId, [
+                            'type'    => 'hand_start',
+                            'state'   => $stateArr,
+                            'version' => $newVersion
+                        ]);
+                    } catch (\Throwable $e) {
+                        error_log("[GameService] Failed to broadcast hand_start: " . $e->getMessage());
+                    }
                 }
             }
+        } catch (\Throwable $e) {
+            $this->state->restoreFromArray($stateBefore);
+            throw $e;
         }
 
         $this->handBootstrapped = true;
@@ -142,12 +148,15 @@ final class GameService
     public function applyAction(int $seat, string $action, int $amount = 0): array
     {
         $normalized = strtolower($action);
+        $stateBefore = $this->state->toArray();
+        $handBootstrappedBefore = $this->handBootstrapped;
 
         // ----------------------------------------------------------
         // SPECIAL CASE: FORFEIT (match-level, not a betting action)
         // ----------------------------------------------------------
         if ($normalized === 'forfeit') {
-            return $this->handleForfeit($seat);
+            $result = $this->handleForfeit($seat);
+            return $this->persistAcceptedAction($result, $stateBefore, $handBootstrappedBefore);
         }
 
         try {
@@ -165,7 +174,8 @@ final class GameService
         // ---------- 2. Hand ended immediately from fold ----------
         if ($result['handEnded'] ?? false) {
             $summary = $this->buildFoldSummary();
-            return $this->buildResolvedHandResult($summary);
+            $result = $this->buildResolvedHandResult($summary);
+            return $this->persistAcceptedAction($result, $stateBefore, $handBootstrappedBefore);
         }
 
         // ------------------------- 3. Phase advancement ------------------------
@@ -174,11 +184,45 @@ final class GameService
         // ---------- 4. Hand ended because phase reached showdown ----------
         if ($phaseInfo !== null && ($phaseInfo['handEnded'] ?? false)) {
             $summary = $this->runShowdownSettlement();
-            return $this->buildResolvedHandResult($summary);
+            $result = $this->buildResolvedHandResult($summary);
+            return $this->persistAcceptedAction($result, $stateBefore, $handBootstrappedBefore);
         }
 
         // ---------------------- 5. Normal non-ending action --------------------
-        return $this->buildStateResult($this->persistence->snapshot($this->state));
+        $result = $this->buildStateResult($this->persistence->snapshot($this->state));
+        return $this->persistAcceptedAction($result, $stateBefore, $handBootstrappedBefore);
+    }
+
+    private function persistAcceptedAction(
+        array $result,
+        array $stateBefore,
+        bool $handBootstrappedBefore
+    ): array {
+        if (!($result['ok'] ?? false) || $this->gameId === null) {
+            return $result;
+        }
+
+        try {
+            $newVersion = $this->persistence->bumpVersion($this->gameId, $this->version);
+            $this->persistence->snapshotForced($this->gameId, $newVersion, $result['state']);
+            $this->version = $newVersion;
+            return $result;
+        } catch (\Throwable $e) {
+            $this->state->restoreFromArray($stateBefore);
+            $this->handBootstrapped = $handBootstrappedBefore;
+            throw $e;
+        }
+    }
+
+    public function restoreLatestSnapshot(): bool
+    {
+        $snapshot = $this->persistence->loadLatest($this->gameId ?? 0);
+        if ($snapshot === null || empty($snapshot['state'])) {
+            return false;
+        }
+
+        $this->restoreSnapshot($snapshot['state'], (int)$snapshot['version']);
+        return true;
     }
 
     public function startNextHand(?int $seed = null): array
