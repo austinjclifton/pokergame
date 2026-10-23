@@ -22,8 +22,6 @@ import GameChatBox from "../components/game/GameChatBox";
 // Cards
 import Card from "../components/cards/Card";
 import CardBack from "../components/cards/CardBack";
-import HandResultOverlay from "../components/game/HandResultOverlay";
-import MatchEndScreen from "../components/game/MatchEndScreen";
 
 import { parseCard } from "../utils/cardParser";
 
@@ -65,7 +63,6 @@ export default function GamePage({ user }) {
     gameState,
     sendAction,
     sendChat,
-    requestSync,
     disconnect,
     toggleChat,
     connected,
@@ -84,17 +81,6 @@ export default function GamePage({ user }) {
   useEffect(() => {
     if (!tableId) navigate("/lobby");
   }, [tableId, navigate]);
-
-  // ---------------------------------------------------------
-  // Prevent socket teardown on refresh
-  // ---------------------------------------------------------
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      // Let hook handle recovery — do NOT disconnect explicitly.
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, []);
 
   // ---------------------------------------------------------
   // Leave Table Handler
@@ -135,39 +121,6 @@ export default function GamePage({ user }) {
       </div>
     );
     }
-
-  // =============================================================
-  // RENDER PRIORITY OVERRIDES (top-level gating for summaries)
-  // =============================================================
-  if (connected && gameState.showSummary && gameState.handSummary) {
-    return (
-      <HandResultOverlay
-        summary={gameState.handSummary}
-        currentUserSeat={gameState.mySeat}
-        onDismiss={() => {
-          // The hook likely exposes setShowSummary or similar; 
-          // if not I’ll patch that next.
-          if (gameState.clearSummary) {
-            gameState.clearSummary();
-          } else {
-            // Fallback: let GameTable's dismiss logic handle it
-            requestSync();
-          }
-        }}
-      />
-    );
-  }
-
-  if (connected && !gameState.showSummary && (gameState.matchEnd || gameState.matchResult)) {
-    const matchData = gameState.matchEnd || gameState.matchResult;
-    return (
-      <MatchEndScreen
-        winner={matchData.winner}
-        loser={matchData.loser}
-        finalHand={matchData.finalHand}
-      />
-    );
-  }
 
   // ============================================================================
   // MAIN RENDER
@@ -219,15 +172,7 @@ export default function GamePage({ user }) {
           </div>
 
           {/* -------------------- Table -------------------- */}
-          <GameTable
-            state={{
-              ...gameState,
-              handSummary: gameState.handSummary,
-              showSummary: gameState.showSummary,
-            }}
-            onAction={handleAction}
-            currentUser={user}
-          />
+          <GameTable state={gameState} currentUser={user} />
 
           {/* -------------------- My Hole Cards -------------------- */}
           {mySeat &&
@@ -292,7 +237,7 @@ export default function GamePage({ user }) {
               allPlayers={gameState.seats}
 
               onAction={handleAction}
-              disabled={!connected || !isMyTurn || gameState.showSummary}
+              disabled={!connected || !isMyTurn}
               showChat={gameState.showChat}
               onToggleChat={toggleChat}
               isMyTurn={isMyTurn}

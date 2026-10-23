@@ -370,15 +370,7 @@ final class GameSocket implements MessageComponentInterface
             $actionStr     = $data['action'] ?? '';
             $amount        = isset($data['amount']) ? (int)$data['amount'] : 0;
             $clientVersion = isset($data['game_version']) ? (int)$data['game_version'] : 0;
-            $stateBefore = method_exists($gameService, 'getSnapshot')
-                ? $gameService->getSnapshot()
-                : [];
-            if ($stateBefore !== [] && method_exists($gameService, 'isHandBootstrapped')) {
-                $stateBefore['_handBootstrapped'] = $gameService->isHandBootstrapped();
-            }
-            $versionBefore = method_exists($gameService, 'getVersion')
-                ? $gameService->getVersion()
-                : 0;
+            [$stateBefore, $versionBefore] = $this->captureCommandState($gameService);
     
             // Version check → force sync if client is stale
             $currentVersion = $gameService->getVersion();
@@ -485,15 +477,7 @@ final class GameSocket implements MessageComponentInterface
                 return;
             }
 
-            $stateBefore = method_exists($gameService, 'getSnapshot')
-                ? $gameService->getSnapshot()
-                : [];
-            if ($stateBefore !== [] && method_exists($gameService, 'isHandBootstrapped')) {
-                $stateBefore['_handBootstrapped'] = $gameService->isHandBootstrapped();
-            }
-            $versionBefore = method_exists($gameService, 'getVersion')
-                ? $gameService->getVersion()
-                : 0;
+            [$stateBefore, $versionBefore] = $this->captureCommandState($gameService);
 
             $startedTransaction = $this->beginTransactionIfNeeded();
     
@@ -692,6 +676,22 @@ final class GameSocket implements MessageComponentInterface
 
         $this->pdo->beginTransaction();
         return true;
+    }
+
+    /** @return array{0: array<string, mixed>, 1: int} */
+    private function captureCommandState(object $gameService): array
+    {
+        $state = method_exists($gameService, 'getSnapshot')
+            ? $gameService->getSnapshot()
+            : [];
+        if ($state !== [] && method_exists($gameService, 'isHandBootstrapped')) {
+            $state['_handBootstrapped'] = $gameService->isHandBootstrapped();
+        }
+
+        return [
+            $state,
+            method_exists($gameService, 'getVersion') ? $gameService->getVersion() : 0,
+        ];
     }
 
     private function finishTransaction(bool $started, bool $commit, string $failure = ''): void
@@ -1326,9 +1326,7 @@ final class GameSocket implements MessageComponentInterface
         );
     
         $svc->loadPlayers($players);
-        $stateBefore = $svc->getSnapshot();
-        $stateBefore['_handBootstrapped'] = $svc->isHandBootstrapped();
-        $versionBefore = $svc->getVersion();
+        [$stateBefore, $versionBefore] = $this->captureCommandState($svc);
     
         // Try to start the first hand with its version and snapshot in one transaction.
         $startedTransaction = $this->beginTransactionIfNeeded();

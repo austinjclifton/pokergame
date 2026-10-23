@@ -7,7 +7,7 @@
 //   • Handle reconnection, ping/pong, and sync/diff messages.
 //   • Manage chat history + unread counts.
 //   • Track per-hand summary (handSummary) for overlays.
-//   • Build a robust matchResult for final match summary screens.
+//   • Build and persist final match summaries for the summary screen.
 //   • Enforce safe behavior for forfeits (no cards leaked).
 //
 // Design notes:
@@ -26,8 +26,6 @@ import API from "../config/api";
 // -----------------------------------------------------------------------------
 function createInitialGameState() {
   return {
-    tableId: null,
-    gameId: null,
     gameVersion: 0,
 
     // Public table state
@@ -37,7 +35,6 @@ function createInitialGameState() {
     pot: 0,
     currentBet: 0,
     actionSeat: null,
-    currentTurn: null,
     phase: "WAITING",
 
     // Private state (local player only)
@@ -57,9 +54,6 @@ function createInitialGameState() {
     // Hand result summary for overlay (per-hand)
     handSummary: null,
 
-    // Full match-level state
-    matchEnded: false,
-    matchResult: null, // { winner, loser, finalHand }
   };
 }
 
@@ -107,6 +101,32 @@ function buildSeatsFromState(state, prevSeats = []) {
 
   seats.sort((a, b) => a.seat_no - b.seat_no);
   return seats;
+}
+
+function projectPublicState(
+  previous,
+  state,
+  version,
+  resetMissing = false,
+  previousSeats = previous.seats,
+) {
+  return {
+    ...previous,
+    gameVersion: version ?? previous.gameVersion,
+    community: resetMissing ? state.board || [] : state.board ?? previous.community,
+    seats: buildSeatsFromState(state, previousSeats),
+    pots: state.pots || [{ amount: state.pot ?? (resetMissing ? 0 : previous.pot) }],
+    pot: resetMissing ? state.pot || 0 : state.pot ?? previous.pot,
+    currentBet: resetMissing
+      ? state.currentBet || 0
+      : state.currentBet ?? previous.currentBet,
+    actionSeat: resetMissing
+      ? state.actionSeat ?? null
+      : state.actionSeat ?? previous.actionSeat,
+    phase: state.phase
+      ? state.phase.toString().toUpperCase()
+      : resetMissing ? "PREFLOP" : previous.phase,
+  };
 }
 
 /**
@@ -193,79 +213,57 @@ function buildSeatsFromFinalHand(finalHand, prevSeats = []) {
   return seats;
 }
 
-/**
- * Build a robust finalHand snapshot for NON-FORFEIT match_end.
- * Priority:
- *   1. lastHandSummaryRef (server hand_end summary: board, players, winners, reason)
- *   2. msg.finalHand or msg.board or stateRef.current.community as fallback board
- */
-// Retained as part of the Phase 0 behavior baseline; later cleanup can decide
-// whether this currently unused compatibility helper should be removed.
-// eslint-disable-next-line no-unused-vars
 function buildNonForfeitFinalHand({
   msg,
   lastHandSummary,
   currentState,
 }) {
   const matchReason = msg.reason || null;
+  const hasSummary = lastHandSummary && typeof lastHandSummary === "object";
+  const fallbackPlayers = msg.players && typeof msg.players === "object"
+    ? msg.players
+    : Object.fromEntries((currentState.seats || []).map((seat) => [
+        seat.seat_no,
+        {
+          seat: seat.seat_no,
+          user_id: seat.user_id,
+          username: seat.username || seat.name || null,
+          cards: seat.cards || [],
+          folded: seat.status === "folded",
+          stack: seat.stack,
+          bet: seat.bet || 0,
+          contribution: seat.contribution || seat.bet || 0,
+        },
+      ]));
+  const finalHand = hasSummary
+    ? { ...lastHandSummary }
+    : { players: fallbackPlayers, winners: [] };
 
-  let finalHand = null;
-
-  // Prefer server-provided hand summary (from hand_end)
-  if (lastHandSummary && typeof lastHandSummary === "object") {
-    finalHand = { ...lastHandSummary };
-  } else {
-    finalHand = {};
-  }
-
-  // --- Board ------------------------------------------------------------------
-  // Try to get a full 5-card board from:
-  //   • summary.board
-  //   • msg.finalHand.board
-  //   • msg.board
-  //   • currentState.community
-  let board =
-    (Array.isArray(finalHand.board) && finalHand.board.length > 0
-      ? finalHand.board
-      : null) ||
-    (msg.finalHand &&
-      Array.isArray(msg.finalHand.board) &&
-      msg.finalHand.board.length > 0 &&
-      msg.finalHand.board) ||
-    (Array.isArray(msg.board) && msg.board.length > 0 && msg.board) ||
-    (Array.isArray(currentState.community) && currentState.community.length > 0
-      ? currentState.community
-      : []);
-
-  finalHand.board = board;
-
-  // --- Players ----------------------------------------------------------------
-  // Normalize player entries (cards, folded, stack, etc.)
-  const normalizedPlayers = normalizeFinalHandPlayers(
+  finalHand.players = normalizeFinalHandPlayers(
     finalHand.players,
-    currentState.seats || []
+    currentState.seats || [],
   );
-  finalHand.players = normalizedPlayers;
-
-  // --- Winners ----------------------------------------------------------------
-  let winners = Array.isArray(finalHand.winners) ? finalHand.winners.slice() : [];
-
-  // If no winners present in summary, build a minimal winner from msg.winner
-  if (winners.length === 0 && msg.winner?.seat != null) {
-    winners.push({
+  finalHand.winners = Array.isArray(finalHand.winners)
+    ? finalHand.winners.slice()
+    : [];
+  if (finalHand.winners.length === 0 && msg.winner?.seat != null) {
+    finalHand.winners.push({
       seat: msg.winner.seat,
       amount: currentState.pot || 0,
       bestHand: [],
     });
   }
-
-  finalHand.winners = winners;
-
-  // --- Reason + HandDescription ----------------------------------------------
+  finalHand.board =
+    (Array.isArray(finalHand.board) && finalHand.board.length === 5
+      ? finalHand.board
+      : null) ||
+    (Array.isArray(msg.board) && msg.board.length > 0 ? msg.board : null) ||
+    (Array.isArray(msg.finalHand?.board) && msg.finalHand.board.length > 0
+      ? msg.finalHand.board
+      : null) ||
+    (Array.isArray(currentState.community) ? currentState.community : []);
   finalHand.reason = matchReason || finalHand.reason || "showdown";
-  if (!("handDescription" in finalHand)) {
-    finalHand.handDescription = null;
-  }
+  finalHand.handDescription ??= null;
 
   return finalHand;
 }
@@ -309,19 +307,14 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
     onMatchEndRef.current = onMatchEnd;
   }, [onMatchEnd]);
 
-  // Keep matchEndedRef synced
-  useEffect(() => {
-    matchEndedRef.current = gameState.matchEnded;
-  }, [gameState.matchEnded]);
-
   // ---------------------------------------------------------------------------
-  // Public API: actions, chat, next-hand, sync, disconnect
+  // Public API: actions, chat, disconnect
   // ---------------------------------------------------------------------------
 
   const sendAction = useCallback(
     (action, amount = 0) => {
       // Block actions if match has ended
-      if (gameState.matchEnded || matchEndedRef.current) {
+      if (matchEndedRef.current) {
         onErrorRef.current?.("Match has ended");
         return;
       }
@@ -345,7 +338,7 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
         onErrorRef.current?.(`Failed to send action: ${err.message}`);
       }
     },
-    [gameState.gameVersion, gameState.matchEnded]
+    [gameState.gameVersion]
   );
 
   const sendChat = useCallback((message) => {
@@ -364,49 +357,6 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
       onErrorRef.current?.(`Failed to send chat message: ${err.message}`);
     }
   }, []);
-
-  const sendNextHand = useCallback(() => {
-    // Block next_hand if match has ended
-    if (gameState.matchEnded || matchEndedRef.current) {
-      return;
-    }
-
-    const ws = socketRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      onErrorRef.current?.("Not connected to game server");
-      return;
-    }
-
-    try {
-      ws.send(
-        JSON.stringify({
-          type: "next_hand",
-          game_version: gameState.gameVersion,
-        })
-      );
-    } catch (err) {
-      onErrorRef.current?.(`Failed to send next_hand request: ${err.message}`);
-    }
-  }, [gameState.gameVersion, gameState.matchEnded]);
-
-  const requestSync = useCallback(() => {
-    const ws = socketRef.current;
-
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      if (tableId) {
-        stateRef.current.isMounted = true;
-        lastConnectRef.current = 0;
-        reconnectAttemptsRef.current = 0;
-      }
-      return;
-    }
-
-    try {
-      ws.send(JSON.stringify({ type: "chat_history" }));
-    } catch (err) {
-      onErrorRef.current?.(`Failed to request sync: ${err.message}`);
-    }
-  }, [tableId]);
 
   const disconnect = useCallback(() => {
     const ws = socketRef.current;
@@ -493,7 +443,13 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
     let pingInterval;
     let reconnectTimeout;
 
-    stateRef.current.isMounted = true;
+    const initialState = createInitialGameState();
+    matchEndedRef.current = false;
+    lastHandSummaryRef.current = null;
+    lastConnectRef.current = 0;
+    reconnectAttemptsRef.current = 0;
+    stateRef.current = { ...initialState, isMounted: true, isConnecting: false };
+    setGameState(initialState);
 
     // -------------------------------------------------------------------------
     // STATE_SYNC – full snapshot
@@ -505,18 +461,7 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
       const version = msg.version ?? 0;
 
       setGameState((prev) => ({
-        ...prev,
-        tableId,
-        gameId: msg.game_id ?? null,
-        gameVersion: version,
-        community: s.board || [],
-        seats: buildSeatsFromState(s),
-        pots: s.pots || [{ amount: s.pot || 0 }],
-        pot: s.pot || 0,
-        currentBet: s.currentBet || 0,
-        actionSeat: s.actionSeat ?? null,
-        currentTurn: s.actionSeat ?? null,
-        phase: (s.phase || "preflop").toString().toUpperCase(),
+        ...projectPublicState(prev, s, version, true, []),
         connected: true,
         reconnecting: false,
       }));
@@ -531,18 +476,7 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
       const s = msg.state || {};
       const version = msg.version ?? null;
 
-      setGameState((prev) => ({
-        ...prev,
-        gameVersion: version ?? prev.gameVersion,
-        community: s.board !== undefined ? s.board : prev.community,
-        seats: buildSeatsFromState(s, prev.seats),
-        pots: s.pots || [{ amount: s.pot ?? prev.pot }],
-        pot: s.pot !== undefined ? s.pot : prev.pot,
-        currentBet: s.currentBet ?? prev.currentBet,
-        actionSeat: s.actionSeat ?? prev.actionSeat,
-        currentTurn: s.actionSeat ?? prev.currentTurn,
-        phase: s.phase ? s.phase.toString().toUpperCase() : prev.phase,
-      }));
+      setGameState((prev) => projectPublicState(prev, s, version));
     };
 
     // -------------------------------------------------------------------------
@@ -607,16 +541,7 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
       const version = msg.version ?? null;
 
       setGameState((prev) => ({
-        ...prev,
-        gameVersion: version ?? prev.gameVersion,
-        community: s.board || [],
-        seats: buildSeatsFromState(s, prev.seats),
-        pots: s.pots || [{ amount: s.pot || 0 }],
-        pot: s.pot || 0,
-        currentBet: s.currentBet || 0,
-        actionSeat: s.actionSeat ?? null,
-        currentTurn: s.actionSeat ?? null,
-        phase: (s.phase || "preflop").toString().toUpperCase(),
+        ...projectPublicState(prev, s, version, true),
         legalActions: [],
       }));
     };
@@ -652,145 +577,15 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
           handDescription: null,
         };
       } else {
-        // ==========================================================================
-        // 2) NON-FORFEIT — prefer lastHandSummary; fallback to current state
-        // ==========================================================================
-        // Check both lastHandSummaryRef and currentState.handSummary
-        // (handSummary might be in state even if ref wasn't updated)
-        const availableSummary = lastHandSummary || currentState.handSummary;
-        
-        if (availableSummary && typeof availableSummary === "object") {
-          // Clone the server hand_end summary (authoritative when present)
-          finalHand = { ...availableSummary };
-        } else {
-          // FIRST HAND or cases where hand_end never fired:
-          // build a minimal finalHand from current state + match_end payload.
-          // Try to get player cards from msg.players (backend sends this in match_end)
-          // or fallback to currentState
-          let playersFromMsg = {};
-          
-          if (msg.players && typeof msg.players === "object") {
-            // Backend sent player data in match_end message
-            playersFromMsg = msg.players;
-          } else {
-            // Fallback: build from currentState (may not have cards)
-            const currentSeats = currentState.seats || [];
-            currentSeats.forEach(seat => {
-              if (seat) {
-                playersFromMsg[seat.seat_no] = {
-                  seat: seat.seat_no,
-                  user_id: seat.user_id,
-                  username: seat.username || seat.name || null,
-                  cards: seat.cards || [],
-                  folded: seat.status === 'folded',
-                  stack: seat.stack,
-                  bet: seat.bet || 0,
-                  contribution: seat.contribution || seat.bet || 0,
-                };
-              }
-            });
-          }
-          
-          finalHand = {
-            board: [],
-            players: playersFromMsg,
-            winners: [],
-            reason: matchReason || "showdown",
-            handDescription: null,
-          };
-        }
-    
-        // --- Normalize players: ensure consistent shape + cards array -------------
-        // Uses current seats as fallback for stack/bet/etc.
-        finalHand.players = normalizeFinalHandPlayers(
-          finalHand.players,
-          currentState.seats || []
-        );
-    
-        // --- Ensure winners exist -------------------------------------------------
-        if (!Array.isArray(finalHand.winners) || finalHand.winners.length === 0) {
-          if (msg.winner?.seat != null) {
-            finalHand.winners = [
-              {
-                seat: msg.winner.seat,
-                amount: currentState.pot || 0,
-                bestHand: [],
-              },
-            ];
-          } else {
-            finalHand.winners = [];
-          }
-        }
-    
-        // --- Resolve FINAL BOARD (key fix for first-hand all-ins) -----------------
-        let boardCandidate = [];
-    
-        // 1. If summary already has a complete board, trust it.
-        if (Array.isArray(finalHand.board) && finalHand.board.length === 5) {
-          boardCandidate = finalHand.board;
-        }
-        // 2. Try msg.board (if backend ever sends it on match_end).
-        else if (Array.isArray(msg.board) && msg.board.length > 0) {
-          boardCandidate = msg.board;
-        }
-        // 3. Try msg.finalHand.board (some backends use this).
-        else if (
-          msg.finalHand &&
-          Array.isArray(msg.finalHand.board) &&
-          msg.finalHand.board.length > 0
-        ) {
-          boardCandidate = msg.finalHand.board;
-        }
-        // 4. Check currentState.community - if it has 5 cards, use it (full board)
-        //    This handles cases where STATE_SYNC updated the board before match_end
-        else if (
-          Array.isArray(currentState.community) &&
-          currentState.community.length === 5
-        ) {
-          boardCandidate = currentState.community;
-        }
-        // 5. If currentState.community is partial but hand ended, backend should have
-        //    dealt all 5 cards. For all-in scenarios, check if we can infer full board.
-        //    For now, use whatever we have (may be partial for preflop all-ins)
-        else if (
-          Array.isArray(currentState.community) &&
-          currentState.community.length > 0
-        ) {
-          boardCandidate = currentState.community;
-        }
-        // 6. Absolute fallback: leave empty (only valid for preflop all-in
-        //    when backend truly never sent any board cards).
-        else {
-          boardCandidate = [];
-        }
-    
-        finalHand.board = boardCandidate;
-    
-        // --- Reason + hand description -------------------------------------------
-        finalHand.reason = matchReason || finalHand.reason || "showdown";
-        if (!("handDescription" in finalHand)) {
-          finalHand.handDescription = null;
-        }
+        finalHand = buildNonForfeitFinalHand({
+          msg,
+          lastHandSummary: lastHandSummary || currentState.handSummary,
+          currentState,
+        });
       }
     
       // ============================================================================
-      // Sanity checks
-      // ============================================================================
-      if (!Array.isArray(finalHand.board)) {
-        console.warn("[useGameSocket] finalHand.board missing or invalid");
-        finalHand.board = [];
-      }
-      if (!finalHand.players || typeof finalHand.players !== "object") {
-        console.warn("[useGameSocket] finalHand.players missing or invalid");
-        finalHand.players = {};
-      }
-      if (!Array.isArray(finalHand.winners)) {
-        console.warn("[useGameSocket] finalHand.winners missing or invalid");
-        finalHand.winners = [];
-      }
-    
-      // ============================================================================
-      // Build seats for final view (used by MatchEndScreen)
+      // Build the final in-memory table state before navigation.
       // ============================================================================
       const finalSeats = buildSeatsFromFinalHand(
         finalHand,
@@ -802,7 +597,6 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
       // ============================================================================
       const matchSummary = {
         tableId,
-        matchEnded: true,
         winner: msg.winner,
         loser: msg.loser,
         finalHand, // Full hand summary (board + players + winners)
@@ -814,16 +608,8 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
       // ============================================================================
       setGameState((prev) => ({
         ...prev,
-        matchEnded: true,
-        matchResult: {
-          winner: msg.winner,
-          loser: msg.loser,
-          finalHand,
-        },
-    
         // Stop all in-game actions
         actionSeat: null,
-        currentTurn: null,
         legalActions: [],
     
         // Use authoritative final board + seats
@@ -1079,8 +865,6 @@ export default function useGameSocket(tableId, onError, onMatchEnd) {
     gameState,
     sendAction,
     sendChat,
-    sendNextHand,
-    requestSync,
     disconnect,
     toggleChat,
     connected: gameState.connected,
